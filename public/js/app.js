@@ -152,21 +152,33 @@ const GPS = {
   start() {
     this.active = true;
     this._setGpsUI('on');
+    Toast.show('Acquiring GPS signal...');
 
-    if (navigator.geolocation) {
-      // Try real GPS first
-      navigator.geolocation.getCurrentPosition(
-        pos => {
-          this.watchId = navigator.geolocation.watchPosition(
-            p => this.onPosition(p),
-            err => { this._startSim(); },
-            { enableHighAccuracy: true, maximumAge: 2000, timeout: 8000 }
-          );
-        },
-        () => this._startSim(),
-        { enableHighAccuracy: true, timeout: 5000 }
-      );
+    if (!navigator.geolocation) { this._startSim(); return; }
+
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        Toast.show('GPS locked ✓');
+        this._applyPosition(pos.coords.latitude, pos.coords.longitude, null, pos.coords.accuracy);
+        this.watchId = navigator.geolocation.watchPosition(
+          p => this.onPosition(p),
+          err => this._handleGpsError(err),
+          { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 }
+        );
+      },
+      err => this._handleGpsError(err),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    );
+  },
+
+  _handleGpsError(err) {
+    if (err.code === 1) {
+      // 권한 거부 — 설정 안내
+      Toast.show('Location permission denied. Check iPhone Settings → Privacy → Location → Safari');
+      this._setGpsUI('off');
+      alert('GPS permission is required.\n\niPhone Settings → Privacy & Security → Location Services → Safari → "While Using App"');
     } else {
+      // 타임아웃 or 불가 → 데모 모드
       this._startSim();
     }
   },
