@@ -1,0 +1,79 @@
+[
+  {
+    "id": "zone-001",
+    "lat": 37.5285,
+    "lng": 126.936,
+    "title": "Sharp Turn",
+    "type": "sharp_turn",
+    "desc": "Steep downhill with sharp curve. Reduce speed below 15 km/h.",
+    "severity": "high",
+    "reportCount": 12,
+    "createdAt": "2026-05-01T00:00:00Z"
+  },
+  {
+    "id": "zone-002",
+    "lat": 37.5245,
+    "lng": 126.931,
+    "title": "Wet Surface",
+    "type": "wet_road",
+    "desc": "Often wet after rain. Low traction zone. Brake early.",
+    "severity": "medium",
+    "reportCount": 7,
+    "createdAt": "2026-05-03T00:00:00Z"
+  },
+  {
+    "id": "zone-003",
+    "lat": 37.5265,
+    "lng": 126.943,
+    "title": "Blind Spot",
+    "type": "blind_spot",
+    "desc": "Pedestrian crossing with limited visibility. Ring your bell.",
+    "severity": "medium",
+    "reportCount": 5,
+    "createdAt": "2026-05-10T00:00:00Z"
+  },
+  {
+    "id": "zone-004",
+    "lat": 37.531,
+    "lng": 126.939,
+    "title": "Road Construction",
+    "type": "construction",
+    "desc": "Active construction. Narrow path, debris possible.",
+    "severity": "high",
+    "reportCount": 20,
+    "createdAt": "2026-05-15T00:00:00Z"
+  },
+  {
+    "id": "zone-005",
+    "lat": 37.522,
+    "lng": 126.945,
+    "title": "Steep Descent",
+    "type": "steep",
+    "desc": "8% gradient for 300m. Use brakes carefully.",
+    "severity": "low",
+    "reportCount": 3,
+    "createdAt": "2026-05-20T00:00:00Z"
+  },
+  {
+    "id": "zone-556b0277",
+    "lat": 37.52,
+    "lng": 126.93,
+    "title": "Road Construction",
+    "type": "construction",
+    "desc": "",
+    "severity": "medium",
+    "reportCount": 1,
+    "createdAt": "2026-06-04T04:47:48.781Z"
+  },
+  {
+    "id": "zone-9be30c04",
+    "lat": 37.55793381139611,
+    "lng": 127.00936891147276,
+    "title": "Wet Surface",
+    "type": "wet_road",
+    "desc": "",
+    "severity": "medium",
+    "reportCount": 1,
+    "createdAt": "2026-06-04T05:13:54.341Z"
+  }
+]

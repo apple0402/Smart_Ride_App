@@ -1,0 +1,22 @@
+[
+  {
+    "id": "rpt-424d8ddd",
+    "lat": 37.52,
+    "lng": 126.93,
+    "type": "construction",
+    "title": "Road Construction",
+    "desc": "",
+    "severity": "medium",
+    "createdAt": "2026-06-04T04:47:48.781Z"
+  },
+  {
+    "id": "rpt-9140569d",
+    "lat": 37.55793381139611,
+    "lng": 127.00936891147276,
+    "type": "wet_road",
+    "title": "Wet Surface",
+    "desc": "",
+    "severity": "medium",
+    "createdAt": "2026-06-04T05:13:54.341Z"
+  }
+]

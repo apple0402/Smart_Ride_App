@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>SmartRider – Safe Cycling</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#0f172a" />
+
+  <!-- iOS 홈화면 앱 설정 -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="SmartRider" />
+  <link rel="apple-touch-icon" href="/icons/icon-180.png" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #f1f5f9; overflow: hidden; }
+    #map { width: 100%; height: 100vh; z-index: 1; }
+    .leaflet-tile { filter: brightness(0.6) saturate(0.8); }
+
+    /* Alert banner */
+    #alert-banner { position:fixed; top:0; left:0; right:0; z-index:1000; transform:translateY(-110%); transition:transform 0.4s cubic-bezier(0.34,1.56,0.64,1); }
+    #alert-banner.show { transform:translateY(0); }
+
+    /* Panels */
+    #bottom-panel { position:fixed; bottom:0; left:0; right:0; z-index:100; background:linear-gradient(to top,rgba(15,23,42,0.98) 60%,transparent); padding:0 16px 24px; }
+    #top-bar { position:fixed; top:0; left:0; right:0; z-index:100; background:linear-gradient(to bottom,rgba(15,23,42,0.95) 60%,transparent); padding:16px; }
+
+    .slide-panel { position:fixed; inset-x-0; bottom:0; z-index:200; background:#0f172a; border-top:1px solid #334155; border-radius:24px 24px 0 0; padding:20px 20px 32px; transform:translateY(100%); transition:transform 0.3s ease; box-shadow:0 -8px 32px rgba(0,0,0,0.5); }
+    .slide-panel.open { transform:translateY(0); }
+    .panel-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:150; display:none; }
+    .panel-overlay.open { display:block; }
+
+    .stat-card { background:rgba(30,41,59,0.9); border:1px solid rgba(71,85,105,0.5); border-radius:14px; backdrop-filter:blur(12px); }
+    .zone-badge { display:inline-flex; align-items:center; gap:6px; background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); border-radius:20px; padding:4px 12px; font-size:12px; color:#fca5a5; }
+
+    @keyframes danger-pulse { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.15);opacity:0.7} }
+    .danger-pulse { animation:danger-pulse 1.5s infinite; }
+
+    .leaflet-popup-content-wrapper { background:#1e293b; color:#f1f5f9; border:1px solid #334155; border-radius:12px; }
+    .leaflet-popup-tip { background:#1e293b; }
+
+    /* History list */
+    .ride-card { background:rgba(30,41,59,0.8); border:1px solid #334155; border-radius:12px; padding:14px; }
+
+    /* Report form */
+    .type-btn { background:rgba(30,41,59,0.7); border:1px solid #475569; border-radius:10px; padding:8px 12px; font-size:13px; cursor:pointer; transition:all 0.15s; text-align:center; }
+    .type-btn.selected { background:rgba(34,197,94,0.2); border-color:#22c55e; color:#4ade80; }
+
+    /* Toast */
+    #toast { position:fixed; bottom:120px; left:50%; transform:translateX(-50%) translateY(20px); background:#1e293b; border:1px solid #334155; border-radius:12px; padding:10px 20px; font-size:13px; opacity:0; transition:all 0.3s; z-index:500; white-space:nowrap; }
+    #toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+  </style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div id="top-bar">
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <div class="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+        </svg>
+      </div>
+      <span class="font-bold text-lg tracking-tight">SmartRider</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <div id="gps-badge" class="flex items-center gap-1.5 bg-slate-700/80 border border-slate-600 rounded-full px-3 py-1">
+        <span class="w-2 h-2 bg-slate-400 rounded-full" id="gps-dot"></span>
+        <span class="text-slate-400 text-xs font-medium" id="gps-label">GPS</span>
+      </div>
+      <button onclick="Auth.openPanel()" id="auth-btn" class="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center border border-slate-600 hover:bg-slate-700 transition-colors" title="Account">
+        <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+        </svg>
+      </button>
+      <button onclick="Panels.openHistory()" class="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center border border-slate-600 hover:bg-slate-700 transition-colors" title="Ride History">
+        <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+      </button>
+      <button onclick="Panels.openSettings()" class="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center border border-slate-600 hover:bg-slate-700 transition-colors">
+        <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+  <div class="mt-3 flex items-center gap-2">
+    <span class="zone-badge" id="danger-count-badge">
+      <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+      </svg>
+      <span id="danger-count-text">Loading zones...</span>
+    </span>
+  </div>
+</div>
+
+<!-- MAP -->
+<div id="map"></div>
+
+<!-- ALERT BANNER -->
+<div id="alert-banner">
+  <div class="mx-4 mt-4 rounded-2xl p-4 border border-red-500/50 bg-red-950/90 backdrop-blur-md shadow-2xl">
+    <div class="flex items-start gap-3">
+      <div class="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0 danger-pulse">
+        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+      </div>
+      <div class="flex-1">
+        <div class="flex items-center justify-between">
+          <span class="font-bold text-red-300 text-base" id="alert-title">⚠️ Danger Zone!</span>
+          <button onclick="Alert.dismiss()" class="text-slate-400 hover:text-white">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <p class="text-red-200/80 text-sm mt-1" id="alert-desc">Danger zone ahead.</p>
+        <div class="flex gap-2 mt-3">
+          <button onclick="Alert.focusOnMap()" class="flex-1 bg-red-500 hover:bg-red-400 text-white text-sm font-semibold py-2 rounded-xl transition-colors">Show on Map</button>
+          <button onclick="Alert.dismiss()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold py-2 rounded-xl transition-colors">Got It</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BOTTOM PANEL -->
+<div id="bottom-panel">
+  <div class="grid grid-cols-3 gap-3 mb-4">
+    <div class="stat-card p-3 text-center">
+      <div class="text-2xl font-black text-green-400" id="speed-val">0</div>
+      <div class="text-xs text-slate-400 mt-0.5">km/h</div>
+    </div>
+    <div class="stat-card p-3 text-center">
+      <div class="text-2xl font-black text-blue-400" id="dist-val">0.0</div>
+      <div class="text-xs text-slate-400 mt-0.5">km</div>
+    </div>
+    <div class="stat-card p-3 text-center">
+      <div class="text-2xl font-black text-purple-400" id="time-val">00:00</div>
+      <div class="text-xs text-slate-400 mt-0.5">time</div>
+    </div>
+  </div>
+  <button id="ride-btn" onclick="Ride.toggle()"
+    class="w-full py-4 rounded-2xl font-bold text-base tracking-wide shadow-lg transition-all bg-green-500 hover:bg-green-400 active:scale-95 text-white">
+    Start Ride
+  </button>
+  <div class="mt-3 flex items-center justify-between">
+    <div class="text-slate-400 text-xs flex items-center gap-1">
+      <span class="text-slate-300 font-medium" id="route-name">SmartRider</span>
+    </div>
+    <button onclick="Panels.openZoneList()" class="text-xs text-red-400 underline underline-offset-2">See Danger Zones</button>
+  </div>
+</div>
+
+<!-- REPORT FAB -->
+<button onclick="Panels.openReport()"
+  class="fixed right-4 z-100 w-12 h-12 bg-orange-500 hover:bg-orange-400 rounded-full shadow-lg flex items-center justify-center transition-all active:scale-90"
+  style="bottom:200px; z-index:101;">
+  <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
+  </svg>
+</button>
+
+<!-- OVERLAY (shared) -->
+<div id="panel-overlay" class="panel-overlay" onclick="Panels.closeAll()"></div>
+
+<!-- ── ZONE LIST PANEL ─────────────────────────────────────────────────────── -->
+<div id="zone-list-panel" class="slide-panel" style="max-height:70vh;overflow-y:auto;">
+  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
+  <h2 class="font-bold text-lg mb-4 flex items-center gap-2">
+    <span class="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center text-xs font-bold">!</span>
+    Danger Zones
+  </h2>
+  <div id="zone-list-items" class="space-y-3 pb-2"></div>
+  <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 rounded-xl text-sm text-slate-300 hover:bg-slate-600 transition-colors">Close</button>
+</div>
+
+<!-- ── REPORT PANEL ─────────────────────────────────────────────────────────── -->
+<div id="report-panel" class="slide-panel" style="max-height:80vh;overflow-y:auto;">
+  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
+  <h2 class="font-bold text-lg mb-1">Report a Hazard</h2>
+  <p class="text-slate-400 text-sm mb-5">Your report helps other riders stay safe.</p>
+
+  <div class="mb-4">
+    <div class="text-xs text-slate-400 mb-2 font-medium uppercase tracking-wider">Hazard Type</div>
+    <div class="grid grid-cols-3 gap-2" id="report-type-grid">
+      <button class="type-btn" data-type="wet_road">💧 Wet Road</button>
+      <button class="type-btn" data-type="debris">🪨 Debris</button>
+      <button class="type-btn" data-type="pothole">🕳️ Pothole</button>
+      <button class="type-btn" data-type="sharp_turn">↩️ Sharp Turn</button>
+      <button class="type-btn" data-type="blind_spot">👁️ Blind Spot</button>
+      <button class="type-btn" data-type="construction">🚧 Construction</button>
+      <button class="type-btn" data-type="steep">⛰️ Steep</button>
+      <button class="type-btn" data-type="general">⚠️ Other</button>
+    </div>
+  </div>
+
+  <div class="mb-4">
+    <div class="text-xs text-slate-400 mb-2 font-medium uppercase tracking-wider">Severity</div>
+    <div class="grid grid-cols-3 gap-2" id="report-severity-grid">
+      <button class="type-btn" data-sev="low">🟡 Low</button>
+      <button class="type-btn selected" data-sev="medium">🟠 Medium</button>
+      <button class="type-btn" data-sev="high">🔴 High</button>
+    </div>
+  </div>
+
+  <div class="mb-5">
+    <div class="text-xs text-slate-400 mb-2 font-medium uppercase tracking-wider">Description (optional)</div>
+    <textarea id="report-desc" rows="2" placeholder="Add details..."
+      class="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 resize-none focus:outline-none focus:border-green-500"></textarea>
+  </div>
+
+  <div class="mb-5 p-3 bg-slate-800 rounded-xl flex items-center gap-2 text-sm">
+    <svg class="w-4 h-4 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+    </svg>
+    <span id="report-location-text" class="text-slate-300">Current location will be used</span>
+  </div>
+
+  <button onclick="Report.submit()"
+    class="w-full py-4 bg-orange-500 hover:bg-orange-400 text-white font-bold rounded-2xl transition-colors">
+    Submit Report
+  </button>
+  <button onclick="Panels.closeAll()" class="mt-2 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">Cancel</button>
+</div>
+
+<!-- ── SETTINGS PANEL ──────────────────────────────────────────────────────── -->
+<div id="settings-panel" class="slide-panel" style="max-height:80vh;overflow-y:auto;">
+  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
+  <h2 class="font-bold text-lg mb-5">Settings</h2>
+  <div class="space-y-5">
+    <div class="flex items-center justify-between">
+      <div><div class="font-medium text-sm">Danger Zone Alerts</div><div class="text-xs text-slate-400">Notify when near a hazard</div></div>
+      <label class="relative inline-flex items-center cursor-pointer">
+        <input type="checkbox" id="set-alerts" class="sr-only peer" checked>
+        <div class="w-11 h-6 bg-slate-600 peer-checked:bg-green-500 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+      </label>
+    </div>
+    <div class="flex items-center justify-between">
+      <div><div class="font-medium text-sm">Alert Distance</div><div class="text-xs text-slate-400">Warn when within</div></div>
+      <select id="set-distance" class="bg-slate-700 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white">
+        <option value="100">100 m</option>
+        <option value="200" selected>200 m</option>
+        <option value="300">300 m</option>
+        <option value="500">500 m</option>
+      </select>
+    </div>
+    <div class="flex items-center justify-between">
+      <div><div class="font-medium text-sm">Speed Warning</div><div class="text-xs text-slate-400">Alert above this speed</div></div>
+      <select id="set-speed-limit" class="bg-slate-700 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white">
+        <option value="20">20 km/h</option>
+        <option value="25" selected>25 km/h</option>
+        <option value="30">30 km/h</option>
+        <option value="0">Off</option>
+      </select>
+    </div>
+    <div class="flex items-center justify-between">
+      <div><div class="font-medium text-sm">Auto-share Reports</div><div class="text-xs text-slate-400">Share hazards with community</div></div>
+      <label class="relative inline-flex items-center cursor-pointer">
+        <input type="checkbox" id="set-share" class="sr-only peer">
+        <div class="w-11 h-6 bg-slate-600 peer-checked:bg-green-500 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+      </label>
+    </div>
+  </div>
+  <button onclick="Settings.save()" class="mt-8 w-full py-4 bg-green-500 rounded-2xl text-sm font-bold text-white hover:bg-green-400 transition-colors">Save Settings</button>
+  <button onclick="Panels.closeAll()" class="mt-2 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">Cancel</button>
+</div>
+
+<!-- ── HISTORY PANEL ──────────────────────────────────────────────────────── -->
+<div id="history-panel" class="slide-panel" style="max-height:80vh;overflow-y:auto;">
+  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
+  <h2 class="font-bold text-lg mb-4">Ride History</h2>
+  <div id="history-list" class="space-y-3 pb-2">
+    <div class="text-center text-slate-500 py-8 text-sm">No rides yet. Start your first ride!</div>
+  </div>
+  <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">Close</button>
+</div>
+
+<!-- ── AUTH PANEL ─────────────────────────────────────────────────────────── -->
+<div id="auth-panel" class="slide-panel" style="max-height:85vh;overflow-y:auto;">
+  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
+
+  <!-- Tab switcher -->
+  <div class="flex bg-slate-800 rounded-xl p-1 mb-6">
+    <button id="tab-login"  onclick="Auth.switchTab('login')"  class="flex-1 py-2 rounded-lg text-sm font-semibold transition-all bg-slate-700 text-white">Login</button>
+    <button id="tab-signup" onclick="Auth.switchTab('signup')" class="flex-1 py-2 rounded-lg text-sm font-semibold transition-all text-slate-400">Sign Up</button>
+  </div>
+
+  <!-- Login form -->
+  <div id="form-login" class="space-y-4">
+    <div>
+      <div class="text-xs text-slate-400 mb-1.5 font-medium">Email</div>
+      <input id="login-email" type="email" placeholder="your@email.com"
+        class="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"/>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400 mb-1.5 font-medium">Password</div>
+      <input id="login-pw" type="password" placeholder="••••••••"
+        class="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"/>
+    </div>
+    <button onclick="Auth.login()"
+      class="w-full py-4 bg-green-500 hover:bg-green-400 text-white font-bold rounded-2xl transition-colors mt-2">
+      Login
+    </button>
+  </div>
+
+  <!-- Signup form -->
+  <div id="form-signup" class="space-y-4 hidden">
+    <div>
+      <div class="text-xs text-slate-400 mb-1.5 font-medium">Name</div>
+      <input id="signup-name" type="text" placeholder="Your name"
+        class="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"/>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400 mb-1.5 font-medium">Email</div>
+      <input id="signup-email" type="email" placeholder="your@email.com"
+        class="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"/>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400 mb-1.5 font-medium">Password</div>
+      <input id="signup-pw" type="password" placeholder="Min 6 characters"
+        class="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"/>
+    </div>
+    <button onclick="Auth.signup()"
+      class="w-full py-4 bg-green-500 hover:bg-green-400 text-white font-bold rounded-2xl transition-colors mt-2">
+      Create Account
+    </button>
+  </div>
+
+  <button onclick="Panels.closeAll()" class="mt-3 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">Cancel</button>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<!-- Scripts -->
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

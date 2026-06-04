@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>SmartRider – Safe Cycling</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Leaflet Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #f1f5f9; overflow: hidden; }
+
+    #map { width: 100%; height: 100vh; z-index: 1; }
+
+    /* Custom Leaflet dark tiles */
+    .leaflet-tile { filter: brightness(0.6) saturate(0.8); }
+
+    /* Alert banner */
+    #alert-banner {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+      transform: translateY(-100%);
+      transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    #alert-banner.show { transform: translateY(0); }
+
+    /* Bottom panel */
+    #bottom-panel {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+      background: linear-gradient(to top, rgba(15,23,42,0.98) 60%, rgba(15,23,42,0));
+      padding: 0 16px 24px;
+    }
+
+    /* Top bar */
+    #top-bar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      background: linear-gradient(to bottom, rgba(15,23,42,0.95) 60%, transparent);
+      padding: 16px;
+    }
+
+    /* Danger zone pulse */
+    @keyframes danger-pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.15); opacity: 0.7; }
+    }
+    .danger-pulse { animation: danger-pulse 1.5s infinite; }
+
+    /* Stat card */
+    .stat-card {
+      background: rgba(30, 41, 59, 0.9);
+      border: 1px solid rgba(71, 85, 105, 0.5);
+      border-radius: 14px;
+      backdrop-filter: blur(12px);
+    }
+
+    /* Ride button */
+    #ride-btn {
+      transition: all 0.2s;
+    }
+    #ride-btn:active { transform: scale(0.95); }
+
+    /* Speed ring */
+    .speed-ring {
+      background: conic-gradient(#22c55e calc(var(--pct) * 1%), rgba(30,41,59,0.5) 0);
+      border-radius: 50%;
+    }
+
+    /* Danger badge */
+    .zone-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 12px;
+      color: #fca5a5;
+    }
+
+    .leaflet-popup-content-wrapper {
+      background: #1e293b;
+      color: #f1f5f9;
+      border: 1px solid #334155;
+      border-radius: 12px;
+    }
+    .leaflet-popup-tip { background: #1e293b; }
+  </style>
+</head>
+<body>
+
+<!-- ===== TOP BAR ===== -->
+<div id="top-bar">
+  <div class="flex items-center justify-between">
+    <!-- Logo -->
+    <div class="flex items-center gap-2">
+      <div class="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+            d="M13 10V3L4 14h7v7l9-11h-7z"/>
+        </svg>
+      </div>
+      <span class="font-bold text-lg tracking-tight">SmartRider</span>
+    </div>
+
+    <!-- Status & Settings -->
+    <div class="flex items-center gap-3">
+      <div id="gps-badge" class="flex items-center gap-1.5 bg-green-500/20 border border-green-500/40 rounded-full px-3 py-1">
+        <span class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+        <span class="text-green-400 text-xs font-medium">GPS ON</span>
+      </div>
+      <button onclick="openSettings()" class="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center border border-slate-600 hover:bg-slate-700 transition-colors">
+        <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Danger count bar -->
+  <div class="mt-3 flex items-center gap-2">
+    <span class="zone-badge danger-pulse" id="danger-count-badge">
+      <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+      </svg>
+      <span id="danger-count-text">3 Danger Zones Ahead</span>
+    </span>
+    <span class="text-slate-400 text-xs">on this route</span>
+  </div>
+</div>
+
+<!-- ===== MAP ===== -->
+<div id="map"></div>
+
+<!-- ===== ALERT BANNER ===== -->
+<div id="alert-banner">
+  <div id="alert-content" class="mx-4 mt-4 rounded-2xl p-4 border border-red-500/50 bg-red-950/90 backdrop-blur-md shadow-2xl">
+    <div class="flex items-start gap-3">
+      <div class="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0 danger-pulse">
+        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+      </div>
+      <div class="flex-1">
+        <div class="flex items-center justify-between">
+          <span class="font-bold text-red-300 text-base" id="alert-title">⚠️ Danger Zone Detected!</span>
+          <button onclick="dismissAlert()" class="text-slate-400 hover:text-white">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <p class="text-red-200/80 text-sm mt-1" id="alert-desc">Steep downhill section with sharp turn in 150m. Reduce speed now.</p>
+        <div class="flex gap-2 mt-3">
+          <button class="flex-1 bg-red-500 hover:bg-red-400 text-white text-sm font-semibold py-2 rounded-xl transition-colors">
+            Show on Map
+          </button>
+          <button onclick="dismissAlert()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold py-2 rounded-xl transition-colors">
+            Got It
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== BOTTOM PANEL ===== -->
+<div id="bottom-panel">
+  <!-- Stats Row -->
+  <div class="grid grid-cols-3 gap-3 mb-4">
+    <!-- Speed -->
+    <div class="stat-card p-3 text-center">
+      <div class="text-2xl font-black text-green-400" id="speed-val">0</div>
+      <div class="text-xs text-slate-400 mt-0.5">km/h</div>
+    </div>
+    <!-- Distance -->
+    <div class="stat-card p-3 text-center">
+      <div class="text-2xl font-black text-blue-400" id="dist-val">0.0</div>
+      <div class="text-xs text-slate-400 mt-0.5">km</div>
+    </div>
+    <!-- Time -->
+    <div class="stat-card p-3 text-center">
+      <div class="text-2xl font-black text-purple-400" id="time-val">00:00</div>
+      <div class="text-xs text-slate-400 mt-0.5">time</div>
+    </div>
+  </div>
+
+  <!-- Ride Button -->
+  <button id="ride-btn" onclick="toggleRide()"
+    class="w-full py-4 rounded-2xl font-bold text-base tracking-wide shadow-lg transition-all
+           bg-green-500 hover:bg-green-400 text-white">
+    Start Ride
+  </button>
+
+  <!-- Safe Route Info -->
+  <div class="mt-3 flex items-center justify-between">
+    <div class="flex items-center gap-2 text-slate-400 text-xs">
+      <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+      </svg>
+      Route: <span class="text-slate-300 font-medium">Han River Cycle Path</span>
+    </div>
+    <button onclick="toggleDangerList()" class="text-xs text-red-400 underline underline-offset-2">
+      See Danger Zones
+    </button>
+  </div>
+</div>
+
+<!-- ===== DANGER ZONE LIST PANEL ===== -->
+<div id="danger-panel"
+  class="fixed inset-x-0 bottom-0 z-200 bg-slate-900 rounded-t-3xl border-t border-slate-700 p-5 pb-8 shadow-2xl transform translate-y-full transition-transform duration-300">
+  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
+  <h2 class="font-bold text-lg mb-4 flex items-center gap-2">
+    <span class="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center text-xs">!</span>
+    Danger Zones on Route
+  </h2>
+  <div id="zone-list" class="space-y-3 max-h-60 overflow-y-auto"></div>
+  <button onclick="toggleDangerList()" class="mt-4 w-full py-3 bg-slate-700 rounded-xl text-sm text-slate-300 hover:bg-slate-600 transition-colors">
+    Close
+  </button>
+</div>
+<div id="danger-overlay" onclick="toggleDangerList()" class="fixed inset-0 bg-black/50 z-150 hidden"></div>
+
+<!-- ===== SETTINGS PANEL ===== -->
+<div id="settings-panel"
+  class="fixed inset-x-0 bottom-0 z-200 bg-slate-900 rounded-t-3xl border-t border-slate-700 p-5 pb-8 shadow-2xl transform translate-y-full transition-transform duration-300">
+  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
+  <h2 class="font-bold text-lg mb-5">Settings</h2>
+  <div class="space-y-4">
+    <div class="flex items-center justify-between">
+      <div>
+        <div class="font-medium text-sm">Danger Zone Alerts</div>
+        <div class="text-xs text-slate-400">Vibrate & sound when near hazard</div>
+      </div>
+      <label class="relative inline-flex items-center cursor-pointer">
+        <input type="checkbox" checked class="sr-only peer">
+        <div class="w-11 h-6 bg-slate-600 peer-checked:bg-green-500 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+      </label>
+    </div>
+    <div class="flex items-center justify-between">
+      <div>
+        <div class="font-medium text-sm">Alert Distance</div>
+        <div class="text-xs text-slate-400">Warn me when within</div>
+      </div>
+      <select class="bg-slate-700 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white">
+        <option>100m</option>
+        <option selected>200m</option>
+        <option>300m</option>
+        <option>500m</option>
+      </select>
+    </div>
+    <div class="flex items-center justify-between">
+      <div>
+        <div class="font-medium text-sm">Speed Warning</div>
+        <div class="text-xs text-slate-400">Alert above speed limit</div>
+      </div>
+      <label class="relative inline-flex items-center cursor-pointer">
+        <input type="checkbox" checked class="sr-only peer">
+        <div class="w-11 h-6 bg-slate-600 peer-checked:bg-green-500 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+      </label>
+    </div>
+    <div class="flex items-center justify-between">
+      <div>
+        <div class="font-medium text-sm">Auto-share Incidents</div>
+        <div class="text-xs text-slate-400">Help other riders by sharing hazards</div>
+      </div>
+      <label class="relative inline-flex items-center cursor-pointer">
+        <input type="checkbox" class="sr-only peer">
+        <div class="w-11 h-6 bg-slate-600 peer-checked:bg-green-500 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+      </label>
+    </div>
+  </div>
+  <button onclick="closeSettings()" class="mt-6 w-full py-3 bg-green-500 rounded-xl text-sm font-bold text-white hover:bg-green-400 transition-colors">
+    Save & Close
+  </button>
+</div>
+<div id="settings-overlay" onclick="closeSettings()" class="fixed inset-0 bg-black/50 z-150 hidden"></div>
+
+<!-- ===== REPORT HAZARD FAB ===== -->
+<button onclick="reportHazard()"
+  class="fixed right-4 z-100 w-12 h-12 bg-orange-500 hover:bg-orange-400 rounded-full shadow-lg flex items-center justify-center transition-all active:scale-90"
+  style="bottom: 200px;">
+  <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+      d="M12 4v16m8-8H4"/>
+  </svg>
+</button>
+
+<script>
+// ── Danger zones data ──────────────────────────────────────────────────────────
+const dangerZones = [
+  {
+    id: 1, lat: 37.5285, lng: 126.9360,
+    title: "Sharp Turn", type: "sharp_turn",
+    desc: "Steep downhill with sharp curve. Reduce speed below 15 km/h.",
+    severity: "high", color: "#ef4444", radius: 80
+  },
+  {
+    id: 2, lat: 37.5245, lng: 126.9310,
+    title: "Wet Surface", type: "wet_road",
+    desc: "Often wet after rain. Low traction zone. Brake early.",
+    severity: "medium", color: "#f97316", radius: 60
+  },
+  {
+    id: 3, lat: 37.5265, lng: 126.9430,
+    title: "Blind Spot", type: "blind_spot",
+    desc: "Pedestrian crossing with limited visibility. Ring your bell.",
+    severity: "medium", color: "#f97316", radius: 50
+  },
+  {
+    id: 4, lat: 37.5310, lng: 126.9390,
+    title: "Road Construction", type: "construction",
+    desc: "Active construction. Narrow path, debris possible.",
+    severity: "high", color: "#ef4444", radius: 100
+  },
+  {
+    id: 5, lat: 37.5220, lng: 126.9450,
+    title: "Steep Descent", type: "steep",
+    desc: "8% gradient for 300m. Use brakes carefully.",
+    severity: "low", color: "#eab308", radius: 40
+  }
+];
+
+const zoneIcons = {
+  sharp_turn: "↩️", wet_road: "💧", blind_spot: "👁️", construction: "🚧", steep: "⛰️"
+};
+
+// ── Map setup ─────────────────────────────────────────────────────────────────
+const map = L.map('map', { zoomControl: false, attributionControl: false })
+  .setView([37.5265, 126.9390], 14);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  maxZoom: 19
+}).addTo(map);
+
+L.control.zoom({ position: 'topright' }).addTo(map);
+
+// ── Draw route (sample path) ──────────────────────────────────────────────────
+const routeCoords = [
+  [37.5200, 126.9300], [37.5220, 126.9330], [37.5240, 126.9350],
+  [37.5255, 126.9370], [37.5265, 126.9390], [37.5280, 126.9410],
+  [37.5295, 126.9430], [37.5310, 126.9450], [37.5320, 126.9470]
+];
+
+L.polyline(routeCoords, {
+  color: '#3b82f6', weight: 4, opacity: 0.8,
+  dashArray: null
+}).addTo(map);
+
+// ── Rider marker ──────────────────────────────────────────────────────────────
+const riderIcon = L.divIcon({
+  className: '',
+  html: `<div style="width:20px;height:20px;background:#22c55e;border:3px solid white;border-radius:50%;box-shadow:0 0 0 4px rgba(34,197,94,0.3)"></div>`,
+  iconSize: [20, 20], iconAnchor: [10, 10]
+});
+const riderMarker = L.marker([37.5240, 126.9350], { icon: riderIcon, zIndexOffset: 1000 }).addTo(map);
+
+// ── Danger zone circles & markers ─────────────────────────────────────────────
+dangerZones.forEach(z => {
+  L.circle([z.lat, z.lng], {
+    radius: z.radius, color: z.color, fillColor: z.color,
+    fillOpacity: 0.2, weight: 2
+  }).addTo(map);
+
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="background:${z.color};border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.5)">${zoneIcons[z.type]}</div>`,
+    iconSize: [32, 32], iconAnchor: [16, 16]
+  });
+
+  L.marker([z.lat, z.lng], { icon }).addTo(map)
+    .bindPopup(`<div style="font-weight:bold;margin-bottom:4px">${z.title}</div><div style="font-size:12px;color:#94a3b8">${z.desc}</div>`);
+});
+
+// ── Danger zone list ───────────────────────────────────────────────────────────
+const zoneList = document.getElementById('zone-list');
+dangerZones.forEach(z => {
+  const severityColor = z.severity === 'high' ? 'text-red-400 bg-red-500/10 border-red-500/30'
+    : z.severity === 'medium' ? 'text-orange-400 bg-orange-500/10 border-orange-500/30'
+    : 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30';
+  zoneList.innerHTML += `
+    <div class="flex items-start gap-3 p-3 rounded-xl border ${severityColor} cursor-pointer"
+         onclick="focusZone(${z.lat}, ${z.lng})">
+      <span class="text-xl">${zoneIcons[z.type]}</span>
+      <div class="flex-1">
+        <div class="font-semibold text-sm text-white">${z.title}</div>
+        <div class="text-xs text-slate-400 mt-0.5">${z.desc}</div>
+      </div>
+      <span class="text-xs font-medium capitalize px-2 py-0.5 rounded-full border ${severityColor}">${z.severity}</span>
+    </div>`;
+});
+
+function focusZone(lat, lng) {
+  map.flyTo([lat, lng], 16, { duration: 1 });
+  toggleDangerList();
+}
+
+// ── Ride simulation ────────────────────────────────────────────────────────────
+let riding = false, elapsed = 0, distance = 0, speedSim = 0;
+let rideInterval, speedInterval;
+let routeIdx = 0;
+
+const btn = document.getElementById('ride-btn');
+const speedEl = document.getElementById('speed-val');
+const distEl = document.getElementById('dist-val');
+const timeEl = document.getElementById('time-val');
+
+function toggleRide() {
+  riding = !riding;
+  if (riding) {
+    btn.textContent = 'Stop Ride';
+    btn.classList.replace('bg-green-500', 'bg-red-500');
+    btn.classList.replace('hover:bg-green-400', 'hover:bg-red-400');
+
+    rideInterval = setInterval(() => {
+      elapsed++;
+      const m = Math.floor(elapsed / 60).toString().padStart(2, '0');
+      const s = (elapsed % 60).toString().padStart(2, '0');
+      timeEl.textContent = `${m}:${s}`;
+
+      // Move rider along route
+      if (routeIdx < routeCoords.length - 1) {
+        routeIdx++;
+        riderMarker.setLatLng(routeCoords[routeIdx]);
+        map.panTo(routeCoords[routeIdx], { animate: true, duration: 0.8 });
+        distance += 0.12;
+        distEl.textContent = distance.toFixed(1);
+
+        // Check proximity to danger zone
+        checkDangerProximity(routeCoords[routeIdx]);
+      }
+    }, 2000);
+
+    speedInterval = setInterval(() => {
+      speedSim = Math.round(15 + Math.random() * 12 - 6);
+      speedEl.textContent = speedSim;
+    }, 800);
+  } else {
+    btn.textContent = 'Start Ride';
+    btn.classList.replace('bg-red-500', 'bg-green-500');
+    btn.classList.replace('hover:bg-red-400', 'hover:bg-green-400');
+    clearInterval(rideInterval);
+    clearInterval(speedInterval);
+    speedEl.textContent = '0';
+    routeIdx = 0;
+    riderMarker.setLatLng(routeCoords[0]);
+    map.flyTo(routeCoords[0], 14);
+  }
+}
+
+function checkDangerProximity([lat, lng]) {
+  dangerZones.forEach(z => {
+    const dist = map.distance([lat, lng], [z.lat, z.lng]);
+    if (dist < 300) {
+      showAlert(z.title, z.desc);
+    }
+  });
+}
+
+// ── Alert ──────────────────────────────────────────────────────────────────────
+let alertTimeout;
+function showAlert(title, desc) {
+  document.getElementById('alert-title').textContent = `⚠️ ${title} Detected!`;
+  document.getElementById('alert-desc').textContent = desc;
+  document.getElementById('alert-banner').classList.add('show');
+  clearTimeout(alertTimeout);
+  alertTimeout = setTimeout(dismissAlert, 6000);
+}
+
+function dismissAlert() {
+  document.getElementById('alert-banner').classList.remove('show');
+}
+
+// Demo: show alert after 1.5s
+setTimeout(() => showAlert('Sharp Turn', 'Steep downhill section with sharp turn in 150m. Reduce speed now.'), 1500);
+
+// ── Report hazard ──────────────────────────────────────────────────────────────
+function reportHazard() {
+  const types = ['Wet Road', 'Debris', 'Pothole', 'Poor Visibility'];
+  const type = types[Math.floor(Math.random() * types.length)];
+  alert(`Report submitted: "${type}" at current location.\nThank you for keeping riders safe! 🙏`);
+}
+
+// ── Panels ─────────────────────────────────────────────────────────────────────
+function toggleDangerList() {
+  const panel = document.getElementById('danger-panel');
+  const overlay = document.getElementById('danger-overlay');
+  const isOpen = panel.style.transform === 'translateY(0%)';
+  panel.style.transform = isOpen ? 'translateY(100%)' : 'translateY(0%)';
+  overlay.classList.toggle('hidden', isOpen);
+}
+
+function openSettings() {
+  document.getElementById('settings-panel').style.transform = 'translateY(0%)';
+  document.getElementById('settings-overlay').classList.remove('hidden');
+}
+
+function closeSettings() {
+  document.getElementById('settings-panel').style.transform = 'translateY(100%)';
+  document.getElementById('settings-overlay').classList.add('hidden');
+}
+</script>
+</body>
+</html>
