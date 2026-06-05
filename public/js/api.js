@@ -67,14 +67,10 @@ const API = {
   // 3) 없으면 zones 테이블에 신규 구역 생성
   async reportHazard({ lat, lng, type, desc, severity }) {
     const typeLabels = {
-      wet_road:     'Wet Surface',
-      sharp_turn:   'Sharp Turn',
-      blind_spot:   'Blind Spot',
-      construction: 'Road Construction',
-      steep:        'Steep Descent',
-      debris:       'Debris on Road',
       pothole:      'Pothole',
-      general:      'Hazard'
+      slippery:     'Slippery Road',
+      construction: 'Construction / Obstacle',
+      other:        'Hazard'
     };
     const title = typeLabels[type] || 'Hazard';
     const { data: { user } } = await sb.auth.getUser();

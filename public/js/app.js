@@ -45,7 +45,16 @@ let riderMarker = L.marker(DEFAULT_CENTER, { icon: riderIcon, zIndexOffset: 1000
 const zoneLayer   = L.layerGroup().addTo(map);
 const reportLayer = L.layerGroup().addTo(map);
 
-const ZONE_ICONS   = { sharp_turn:'↩️', wet_road:'💧', blind_spot:'👁️', construction:'🚧', steep:'⛰️', debris:'🪨', pothole:'🕳️', general:'⚠️' };
+const ZONE_ICONS = {
+  // 신규 4종
+  pothole:      '🕳️',
+  slippery:     '💧',
+  construction: '🚧',
+  other:        '⚠️',
+  // 기존 DB 데이터 하위 호환
+  wet_road:  '💧', sharp_turn: '↩️', blind_spot: '👁️',
+  steep:     '⛰️', debris:     '🪨', general:    '⚠️'
+};
 const SEV_COLORS   = { high:'#ef4444', medium:'#f97316', low:'#eab308' };
 const SEV_RADIUS   = { high: 80, medium: 60, low: 40 };
 

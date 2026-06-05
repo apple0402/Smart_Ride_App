@@ -53,8 +53,9 @@
     .ride-card { background:rgba(30,41,59,0.8); border:1px solid #334155; border-radius:12px; padding:14px; }
 
     /* Report form */
-    .type-btn { background:rgba(30,41,59,0.7); border:1px solid #475569; border-radius:10px; padding:8px 12px; font-size:13px; cursor:pointer; transition:all 0.15s; text-align:center; }
+    .type-btn { background:rgba(30,41,59,0.7); border:1px solid #475569; border-radius:12px; cursor:pointer; transition:all 0.15s; text-align:center; color:#f1f5f9; }
     .type-btn.selected { background:rgba(34,197,94,0.2); border-color:#22c55e; color:#4ade80; }
+    .type-btn.selected .sub-label { color:#86efac; }
 
     /* Toast */
     #toast { position:fixed; bottom:120px; left:16px; right:16px; transform:translateY(20px); background:#1e293b; border:1px solid #334155; border-radius:12px; padding:10px 16px; font-size:13px; opacity:0; transition:all 0.3s; z-index:500; text-align:center; line-height:1.4; }
@@ -200,25 +201,37 @@
   <p class="text-slate-400 text-sm mb-5">Your report helps other riders stay safe.</p>
 
   <div class="mb-4">
-    <div class="text-xs text-slate-400 mb-2 font-medium uppercase tracking-wider">Hazard Type</div>
-    <div class="grid grid-cols-3 gap-2" id="report-type-grid">
-      <button class="type-btn" data-type="wet_road">💧 Wet Road</button>
-      <button class="type-btn" data-type="debris">🪨 Debris</button>
-      <button class="type-btn" data-type="pothole">🕳️ Pothole</button>
-      <button class="type-btn" data-type="sharp_turn">↩️ Sharp Turn</button>
-      <button class="type-btn" data-type="blind_spot">👁️ Blind Spot</button>
-      <button class="type-btn" data-type="construction">🚧 Construction</button>
-      <button class="type-btn" data-type="steep">⛰️ Steep</button>
-      <button class="type-btn" data-type="general">⚠️ Other</button>
+    <div class="text-xs text-slate-400 mb-3 font-medium uppercase tracking-wider">Hazard Type</div>
+    <div class="grid grid-cols-2 gap-3" id="report-type-grid">
+      <button class="type-btn flex flex-col items-center py-5 px-3" data-type="pothole">
+        <span class="text-3xl mb-2">🕳️</span>
+        <span class="font-bold text-sm">Pothole</span>
+        <span class="sub-label text-xs text-slate-400 mt-1">포트홀 / 균열</span>
+      </button>
+      <button class="type-btn flex flex-col items-center py-5 px-3" data-type="slippery">
+        <span class="text-3xl mb-2">💧</span>
+        <span class="font-bold text-sm">Slippery</span>
+        <span class="sub-label text-xs text-slate-400 mt-1">미끄러움 / 맨홀</span>
+      </button>
+      <button class="type-btn flex flex-col items-center py-5 px-3" data-type="construction">
+        <span class="text-3xl mb-2">🚧</span>
+        <span class="font-bold text-sm">Construction</span>
+        <span class="sub-label text-xs text-slate-400 mt-1">도로 공사 / 장애물</span>
+      </button>
+      <button class="type-btn flex flex-col items-center py-5 px-3" data-type="other">
+        <span class="text-3xl mb-2">⚠️</span>
+        <span class="font-bold text-sm">Other</span>
+        <span class="sub-label text-xs text-slate-400 mt-1">기타 위험</span>
+      </button>
     </div>
   </div>
 
   <div class="mb-4">
     <div class="text-xs text-slate-400 mb-2 font-medium uppercase tracking-wider">Severity</div>
     <div class="grid grid-cols-3 gap-2" id="report-severity-grid">
-      <button class="type-btn" data-sev="low">🟡 Low</button>
-      <button class="type-btn selected" data-sev="medium">🟠 Medium</button>
-      <button class="type-btn" data-sev="high">🔴 High</button>
+      <button class="type-btn py-2 px-3 text-sm" data-sev="low">🟡 Low</button>
+      <button class="type-btn selected py-2 px-3 text-sm" data-sev="medium">🟠 Medium</button>
+      <button class="type-btn py-2 px-3 text-sm" data-sev="high">🔴 High</button>
     </div>
   </div>
 
