@@ -10,6 +10,29 @@ const map = L.map('map', { zoomControl: false, attributionControl: false })
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
 L.control.zoom({ position: 'topright' }).addTo(map);
 
+// ── 현재 위치 버튼 (우상단 줌 컨트롤 아래) ────────────────────────────────
+const LocateControl = L.Control.extend({
+  onAdd() {
+    const btn = L.DomUtil.create('button');
+    btn.title = '현재 위치로 이동';
+    btn.style.cssText = [
+      'width:34px','height:34px','margin-top:8px',
+      'background:rgba(15,23,42,0.92)','border:1px solid #475569',
+      'border-radius:8px','display:flex','align-items:center',
+      'justify-content:center','cursor:pointer','box-shadow:0 2px 8px rgba(0,0,0,0.4)'
+    ].join(';');
+    btn.innerHTML = `<svg width="18" height="18" fill="none" stroke="#94a3b8" stroke-width="2" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="3" fill="#94a3b8"/>
+      <path stroke-linecap="round" d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+      <circle cx="12" cy="12" r="8" stroke-dasharray="3 3"/>
+    </svg>`;
+    L.DomEvent.disableClickPropagation(btn);
+    btn.addEventListener('click', () => GPS.locateMe());
+    return btn;
+  }
+});
+new LocateControl({ position: 'topright' }).addTo(map);
+
 // ── Rider marker ─────────────────────────────────────────────────────────────
 const riderIcon = L.divIcon({
   className: '',
@@ -43,7 +66,7 @@ async function loadZones() {
 
     allZones = fresh;
     renderZones(allZones);
-    document.getElementById('danger-count-text').textContent = `${allZones.length} Danger Zones Nearby`;
+    updateNearbyCount();
     renderZoneList();
 
     if (newZones.length) {
@@ -128,81 +151,119 @@ function haversine(lat1, lng1, lat2, lng2) {
   return R*2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
+// ── 주변 위험구역 카운트 업데이트 (반경 500m) ──────────────────────────────
+function updateNearbyCount() {
+  const NEARBY_RADIUS = 500;
+  const pos = GPS.lastPos;
+  const el = document.getElementById('danger-count-text');
+  if (!pos) {
+    el.textContent = allZones.length ? `${allZones.length} Danger Zones` : 'No Zones';
+    return;
+  }
+  const count = allZones.filter(z => haversine(pos.lat, pos.lng, z.lat, z.lng) <= NEARBY_RADIUS).length;
+  el.textContent = `${count} Danger Zones Nearby`;
+}
+
+// ── 경고음 (Web Audio API, 3회 비프) ───────────────────────────────────────
+function playAlertSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.3, 0.6].forEach(delay => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+      gain.gain.linearRampToValueAtTime(0.4, ctx.currentTime + delay + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.25);
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.3);
+    });
+  } catch(e) {}
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GPS Module — Step 2: Real GPS + accuracy circle + simulation mode
 // ═══════════════════════════════════════════════════════════════════════════
 const GPS = {
-  watchId:       null,
-  lastPos:       null,
-  active:        false,
+  watchId:        null,
+  lastPos:        null,
+  active:         false,
   accuracyCircle: null,
-  speedBuffer:   [],     // rolling window for speed smoothing
-  simInterval:   null,
-  simIdx:        0,
+  speedBuffer:    [],
+  _gpsLocked:     false,
+  _hasPanned:     false,
+  _prevPos:       null,
 
-  // Demo route coords for simulation (when real GPS unavailable)
-  simRoute: [
-    [37.5200,126.9300],[37.5212,126.9315],[37.5224,126.9330],[37.5236,126.9345],
-    [37.5248,126.9355],[37.5258,126.9368],[37.5265,126.9380],[37.5272,126.9395],
-    [37.5282,126.9408],[37.5293,126.9422],[37.5302,126.9435],[37.5312,126.9448],
-    [37.5320,126.9462],[37.5310,126.9390],[37.5295,126.9375],[37.5280,126.9360],
-    [37.5265,126.9350],[37.5250,126.9340],[37.5236,126.9330]
-  ],
+  // 앱 시작 시 자동 위치 추적 시작 (라이딩과 무관)
+  startTracking() {
+    if (this.active) return;
+    this.active     = true;
+    this._gpsLocked = false;
+    this._hasPanned = false;
 
-  start() {
-    this.active = true;
-    this._setGpsUI('on');
-    Toast.show('Acquiring GPS signal...');
+    if (!navigator.geolocation) {
+      this.active = false;
+      this._setGpsUI('off');
+      Toast.show('이 브라우저는 GPS를 지원하지 않거나 보안 연결(HTTPS)이 필요합니다.');
+      return;
+    }
 
-    if (!navigator.geolocation) { this._startSim(); return; }
-
-    navigator.geolocation.getCurrentPosition(
+    this._setGpsUI('acquiring');
+    this.watchId = navigator.geolocation.watchPosition(
       pos => {
-        Toast.show('GPS locked ✓');
-        this._applyPosition(pos.coords.latitude, pos.coords.longitude, null, pos.coords.accuracy);
-        this.watchId = navigator.geolocation.watchPosition(
-          p => this.onPosition(p),
-          err => this._handleGpsError(err),
-          { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 }
-        );
+        if (!this._gpsLocked) {
+          this._gpsLocked = true;
+          this._setGpsUI('on');
+          Toast.show('GPS 연결됨 ✓');
+        }
+        this.onPosition(pos);
       },
-      err => this._handleGpsError(err),
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+      err => {
+        this._setGpsUI('off');
+        this.active = false;
+        if (this.watchId !== null) { navigator.geolocation.clearWatch(this.watchId); this.watchId = null; }
+        if (err.code === 1) {
+          Toast.show('위치 권한 없음 — 기기 설정에서 위치 권한을 허용하거나 Demo Mode를 켜세요');
+        } else if (err.code === 2) {
+          Toast.show('위치 신호 없음 — 5초 후 재시도합니다');
+          setTimeout(() => this.startTracking(), 5000);
+        } else if (err.code === 3) {
+          Toast.show('위치 조회 시간 초과 — 재시도 중...');
+          setTimeout(() => this.startTracking(), 3000);
+        } else {
+          Toast.show(`GPS 오류 (${err.message || '알 수 없음'}) — Demo Mode를 켜보세요`);
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 }
     );
   },
 
-  _handleGpsError(err) {
-    if (err.code === 1) {
-      // 권한 거부 — 설정 안내
-      Toast.show('Location permission denied. Check iPhone Settings → Privacy → Location → Safari');
-      this._setGpsUI('off');
-      alert('GPS permission is required.\n\niPhone Settings → Privacy & Security → Location Services → Safari → "While Using App"');
-    } else {
-      // 타임아웃 or 불가 → 데모 모드
-      this._startSim();
-    }
-  },
-
-  _startSim() {
-    Toast.show('GPS unavailable — Demo mode 🎮');
-    this._setGpsUI('sim');
-    this.simIdx = 0;
-    this.simInterval = setInterval(() => {
-      const [lat, lng] = this.simRoute[this.simIdx % this.simRoute.length];
-      const fakeSpeed  = Math.round(15 + Math.sin(this.simIdx * 0.5) * 6); // 9-21 km/h wave
-      this._applyPosition(lat, lng, fakeSpeed, 10);
-      this.simIdx++;
-    }, 1500);
-  },
-
-  stop() {
-    if (this.watchId !== null)  { navigator.geolocation.clearWatch(this.watchId); this.watchId = null; }
-    if (this.simInterval !== null) { clearInterval(this.simInterval); this.simInterval = null; }
-    if (this.accuracyCircle)    { this.accuracyCircle.remove(); this.accuracyCircle = null; }
-    this.active  = false;
-    this.lastPos = null;
+  // 위치 추적 완전 정지
+  stopTracking() {
+    if (this.watchId !== null) { navigator.geolocation.clearWatch(this.watchId); this.watchId = null; }
+    if (this.accuracyCircle)   { this.accuracyCircle.remove(); this.accuracyCircle = null; }
+    this.active      = false;
+    this.lastPos     = null;
     this.speedBuffer = [];
+    this._gpsLocked  = false;
+    this._hasPanned  = false;
+    this._prevPos    = null;
     this._setGpsUI('off');
+  },
+
+  // 현재 위치로 지도 이동 (GPS 꺼져 있으면 재시작)
+  locateMe() {
+    if (this.lastPos) {
+      map.panTo([this.lastPos.lat, this.lastPos.lng], { animate: true, duration: 0.5 });
+    } else if (!this.active) {
+      Toast.show('GPS 재시작 중...');
+      this.startTracking();
+    } else {
+      Toast.show('위치 신호를 기다리는 중입니다...');
+    }
   },
 
   onPosition(pos) {
@@ -214,8 +275,9 @@ const GPS = {
   _applyPosition(lat, lng, rawKmh, accuracy) {
     riderMarker.setLatLng([lat, lng]);
     this.lastPos = { lat, lng };
+    updateNearbyCount();
 
-    // Accuracy circle on map
+    // Accuracy circle
     if (accuracy != null && accuracy < 200) {
       if (!this.accuracyCircle) {
         this.accuracyCircle = L.circle([lat, lng], {
@@ -228,18 +290,22 @@ const GPS = {
       }
     }
 
-    if (!Ride.active) return;
+    // 지도 항상 따라가기: 첫 fix 또는 라이딩 중
+    if (!this._hasPanned || Ride.active) {
+      this._hasPanned = true;
+      map.panTo([lat, lng], { animate: true, duration: 0.3 });
+    }
 
-    map.panTo([lat, lng], { animate: true, duration: 0.5 });
+    if (!Ride.active) return;
 
     // Distance
     if (this._prevPos) {
       const d = haversine(this._prevPos.lat, this._prevPos.lng, lat, lng);
-      if (d < 500) Ride.addDistance(d); // ignore GPS jumps > 500m
+      if (d < 500) Ride.addDistance(d);
     }
     this._prevPos = { lat, lng };
 
-    // Speed smoothing (rolling avg of last 4 readings)
+    // Speed smoothing
     if (rawKmh != null) {
       this.speedBuffer.push(rawKmh);
       if (this.speedBuffer.length > 4) this.speedBuffer.shift();
@@ -249,15 +315,7 @@ const GPS = {
       if (limit > 0 && smoothed > limit) Alert.showSpeedWarning(smoothed, limit);
     }
 
-    // Danger proximity check
     checkProximity(lat, lng);
-  },
-
-  _prevPos: null,
-
-  onError(err) {
-    console.warn('GPS error:', err.message);
-    Toast.show('GPS signal lost. Retrying...');
   },
 
   _setGpsUI(state) {
@@ -269,11 +327,11 @@ const GPS = {
       label.textContent = 'GPS ON';
       label.className = 'text-green-400 text-xs font-medium';
       badge.className = 'flex items-center gap-1.5 bg-green-500/20 border border-green-500/40 rounded-full px-3 py-1';
-    } else if (state === 'sim') {
-      dot.className   = 'w-2 h-2 bg-yellow-400 rounded-full animate-pulse';
-      label.textContent = 'DEMO';
-      label.className = 'text-yellow-400 text-xs font-medium';
-      badge.className = 'flex items-center gap-1.5 bg-yellow-500/20 border border-yellow-500/40 rounded-full px-3 py-1';
+    } else if (state === 'acquiring') {
+      dot.className   = 'w-2 h-2 bg-blue-400 rounded-full animate-ping';
+      label.textContent = 'Searching...';
+      label.className = 'text-blue-400 text-xs font-medium';
+      badge.className = 'flex items-center gap-1.5 bg-blue-500/20 border border-blue-500/40 rounded-full px-3 py-1';
     } else {
       dot.className   = 'w-2 h-2 bg-slate-400 rounded-full';
       label.textContent = 'GPS';
@@ -311,16 +369,19 @@ const Ride = {
     btn.classList.replace('bg-green-500','bg-red-500');
     btn.classList.replace('hover:bg-green-400','hover:bg-red-400');
 
-    GPS.start();
+    // GPS는 앱 시작 시 이미 추적 중 — 없으면 재시작
+    if (!GPS.active) GPS.startTracking();
+    GPS._prevPos = null; // 거리 계산 초기화
+
     this.timer = setInterval(() => this._tick(), 1000);
     startZonePolling();
-    Toast.show('Ride started! Stay safe. 🚴');
+    Toast.show('라이딩 시작! 안전하게 달려요 🚴');
   },
 
   async stop() {
     this.active = false;
     clearInterval(this.timer);
-    GPS.stop();
+    // GPS 추적은 계속 유지 (위치 표시용)
     stopZonePolling();
 
     const btn = document.getElementById('ride-btn');
@@ -378,26 +439,71 @@ const Alert = {
     document.getElementById('alert-title').textContent = `⚠️ ${zone.title} Ahead!`;
     document.getElementById('alert-desc').textContent  = zone.desc;
     document.getElementById('alert-banner').classList.add('show');
+    document.getElementById('alert-clear-btn').classList.remove('hidden');
     clearTimeout(alertTimeout);
     alertTimeout = setTimeout(() => this.dismiss(), 7000);
     if (Ride.active) Ride.passedZones.push(zone.id);
+    playAlertSound();
+    if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
   },
 
   showSpeedWarning(speed, limit) {
     document.getElementById('alert-title').textContent = `🚨 Speed Warning!`;
     document.getElementById('alert-desc').textContent  = `You're going ${speed} km/h — limit is ${limit} km/h. Slow down!`;
     document.getElementById('alert-banner').classList.add('show');
+    document.getElementById('alert-clear-btn').classList.add('hidden');
     clearTimeout(alertTimeout);
     alertTimeout = setTimeout(() => this.dismiss(), 4000);
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 100]);
   },
 
   dismiss() {
     document.getElementById('alert-banner').classList.remove('show');
+    document.getElementById('alert-clear-btn').classList.add('hidden');
     currentAlertZone = null;
   },
 
   focusOnMap() {
     if (currentAlertZone) { map.flyTo([currentAlertZone.lat, currentAlertZone.lng], 17); this.dismiss(); }
+  },
+
+  requestClear() {
+    if (currentAlertZone) ClearZone.show(currentAlertZone);
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ClearZone Module — 위험구역 해제 신청
+// ═══════════════════════════════════════════════════════════════════════════
+const ClearZone = {
+  targetZone: null,
+
+  show(zone) {
+    this.targetZone = zone;
+    document.getElementById('clear-zone-name').textContent = `"${zone.title}" 구역`;
+    document.getElementById('clear-zone-modal').classList.remove('hidden');
+  },
+
+  cancel() {
+    document.getElementById('clear-zone-modal').classList.add('hidden');
+    this.targetZone = null;
+  },
+
+  async confirm() {
+    if (!this.targetZone) return;
+    const zoneId = this.targetZone.id;
+    this.cancel();
+    try {
+      await API.clearZone(zoneId);
+      allZones = allZones.filter(z => z.id !== zoneId);
+      alertedZones.delete(zoneId);
+      renderZones(allZones);
+      renderZoneList();
+      updateNearbyCount();
+      Toast.show('위험 구역 해제 신청 완료 ✓ 감사합니다!');
+    } catch(e) {
+      Toast.show('해제 신청 중 오류가 발생했습니다');
+    }
   }
 };
 
@@ -475,14 +581,14 @@ const Settings = {
 
   save() {
     const s = {
-      alertsEnabled:  document.getElementById('set-alerts').checked,
-      alertDistance:  parseInt(document.getElementById('set-distance').value),
-      speedLimit:     parseInt(document.getElementById('set-speed-limit').value),
-      autoShare:      document.getElementById('set-share').checked
+      alertsEnabled: document.getElementById('set-alerts').checked,
+      alertDistance: parseInt(document.getElementById('set-distance').value),
+      speedLimit:    parseInt(document.getElementById('set-speed-limit').value),
+      autoShare:     document.getElementById('set-share').checked
     };
     localStorage.setItem('smartrider_settings', JSON.stringify(s));
     Panels.closeAll();
-    Toast.show('Settings saved ✓');
+    Toast.show('설정 저장됨 ✓');
   }
 };
 
@@ -669,3 +775,4 @@ const Auth = {
 loadZones();
 Settings.load();
 Auth.init();
+GPS.startTracking(); // 앱 시작 시 자동으로 현재 위치 추적 시작

@@ -54,5 +54,10 @@ const API = {
   async getMe(token) {
     const r = await fetch(`${API_BASE}/auth/me`, { headers: { 'Authorization': `Bearer ${token}` } });
     return r.json();
+  },
+
+  async clearZone(zoneId) {
+    const r = await fetch(`${API_BASE}/zones/${zoneId}`, { method: 'DELETE' });
+    return r.json();
   }
 };

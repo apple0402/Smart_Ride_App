@@ -54,6 +54,16 @@ router.post('/', (req, res) => {
   res.status(201).json(newZone);
 });
 
+// DELETE /api/zones/:id — 위험구간 해제
+router.delete('/:id', (req, res) => {
+  const zones = readZones();
+  const idx = zones.findIndex(z => z.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Zone not found' });
+  const [removed] = zones.splice(idx, 1);
+  writeZones(zones);
+  res.json({ success: true, id: removed.id });
+});
+
 // Haversine 거리 계산 (미터 단위)
 function haversine(lat1, lng1, lat2, lng2) {
   const R = 6371000;
