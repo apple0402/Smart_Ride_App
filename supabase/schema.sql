@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS zones (
   lng          DOUBLE PRECISION NOT NULL,
   title        TEXT NOT NULL,
   type         TEXT NOT NULL DEFAULT 'general',
-  desc         TEXT DEFAULT '',
+  description  TEXT DEFAULT '',
   severity     TEXT NOT NULL DEFAULT 'medium',
   report_count INT  NOT NULL DEFAULT 1,
   created_at   TIMESTAMPTZ DEFAULT NOW()
@@ -31,15 +31,15 @@ CREATE TABLE IF NOT EXISTS rides (
 
 -- ── 3. 위험 신고 테이블 ──────────────────────────────────────
 CREATE TABLE IF NOT EXISTS reports (
-  id         TEXT PRIMARY KEY,
-  user_id    UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  lat        DOUBLE PRECISION NOT NULL,
-  lng        DOUBLE PRECISION NOT NULL,
-  type       TEXT NOT NULL,
-  title      TEXT NOT NULL,
-  desc       TEXT DEFAULT '',
-  severity   TEXT DEFAULT 'medium',
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  id          TEXT PRIMARY KEY,
+  user_id     UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  lat         DOUBLE PRECISION NOT NULL,
+  lng         DOUBLE PRECISION NOT NULL,
+  type        TEXT NOT NULL,
+  title       TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  severity    TEXT DEFAULT 'medium',
+  created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ============================================================
@@ -83,7 +83,7 @@ CREATE POLICY "reports_auth_insert"
 -- 기존 데이터 마이그레이션 (zones.json → Supabase)
 -- ============================================================
 
-INSERT INTO zones (id, lat, lng, title, type, desc, severity, report_count, created_at)
+INSERT INTO zones (id, lat, lng, title, type, description, severity, report_count, created_at)
 VALUES
   ('zone-001', 37.5285, 126.9360, 'Sharp Turn',       'sharp_turn',  'Steep downhill with sharp curve. Reduce speed below 15 km/h.', 'high',   12, '2026-05-01T00:00:00Z'),
   ('zone-002', 37.5245, 126.9310, 'Wet Surface',       'wet_road',    'Often wet after rain. Low traction zone. Brake early.',         'medium',  7, '2026-05-03T00:00:00Z'),

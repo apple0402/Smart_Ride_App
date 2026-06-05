@@ -10,7 +10,7 @@ function mapZone(z) {
     lng:         z.lng,
     title:       z.title,
     type:        z.type,
-    desc:        z.desc || '',
+    desc:        z.description || '',   // DB: description → 앱: desc
     severity:    z.severity,
     reportCount: z.report_count,
     createdAt:   z.created_at
@@ -81,11 +81,11 @@ const API = {
 
     // 신고 저장
     await sb.from('reports').insert({
-      id:       _uid('rpt'),
-      user_id:  user?.id || null,
+      id:          _uid('rpt'),
+      user_id:     user?.id || null,
       lat, lng, type, title,
-      desc:     desc || '',
-      severity: severity || 'medium'
+      description: desc || '',
+      severity:    severity || 'medium'
     });
 
     // 중복 구역 확인 (100m 이내)
@@ -101,7 +101,7 @@ const API = {
     const { data: newZone, error } = await sb.from('zones').insert({
       id:           _uid('zone'),
       lat, lng, title, type,
-      desc:         desc || '',
+      description:  desc || '',
       severity:     severity || 'medium',
       report_count: 1
     }).select().single();
