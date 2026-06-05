@@ -1,25 +1,17 @@
 require('dotenv').config();
-const express    = require('express');
-const cors       = require('cors');
-const bodyParser = require('body-parser');
-const path       = require('path');
+const express = require('express');
+const path    = require('path');
 
-const app = express();
+const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// ── Middleware ──────────────────────────────────────────────────────────────
-app.use(cors());
-app.use(bodyParser.json());
+// ── 정적 파일 서빙 (프론트엔드가 Supabase와 직접 통신) ──────────────────────
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── API Routes ──────────────────────────────────────────────────────────────
-app.use('/api/zones',   require('./routes/zones'));
-app.use('/api/reports', require('./routes/reports'));
-app.use('/api/rides',   require('./routes/rides'));
-app.use('/api/auth',    require('./routes/auth'));
-
-// ── Health check ─────────────────────────────────────────────────────────────
-app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
+// ── 헬스체크 ──────────────────────────────────────────────────────────────────
+app.get('/api/health', (req, res) =>
+  res.json({ status: 'ok', time: new Date(), backend: 'supabase' })
+);
 
 // ── SPA fallback ──────────────────────────────────────────────────────────────
 app.get('*', (req, res) => {

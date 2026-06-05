@@ -80,6 +80,20 @@ CREATE POLICY "reports_auth_insert"
   ON reports FOR INSERT WITH CHECK (auth.role() = 'authenticated');
 
 -- ============================================================
+-- 테이블 접근 권한 (GRANT)
+-- RLS 정책과 별개로 롤별 기본 접근권이 필요합니다.
+-- ============================================================
+
+-- anon (비로그인 사용자): zones, reports 읽기 허용
+GRANT SELECT ON public.zones   TO anon;
+GRANT SELECT ON public.reports TO anon;
+
+-- authenticated (로그인 사용자): 모든 테이블 전체 권한
+GRANT ALL ON public.zones   TO authenticated;
+GRANT ALL ON public.rides   TO authenticated;
+GRANT ALL ON public.reports TO authenticated;
+
+-- ============================================================
 -- 기존 데이터 마이그레이션 (zones.json → Supabase)
 -- ============================================================
 
