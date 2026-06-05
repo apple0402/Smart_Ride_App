@@ -491,6 +491,12 @@ const ClearZone = {
 
   async confirm() {
     if (!this.targetZone) return;
+    if (!Auth.user) {
+      Toast.show('위험 해제 신청은 로그인이 필요합니다');
+      this.cancel();
+      setTimeout(() => Auth.openPanel(), 300);
+      return;
+    }
     const zoneId = this.targetZone.id;
     this.cancel();
     try {
@@ -515,7 +521,13 @@ const Report = {
   selectedSev: 'medium',
 
   async submit() {
-    if (!this.selectedType) { Toast.show('Please select a hazard type'); return; }
+    if (!this.selectedType) { Toast.show('위험 유형을 선택해 주세요'); return; }
+    if (!Auth.user) {
+      Toast.show('신고하려면 로그인이 필요합니다');
+      Panels.closeAll();
+      setTimeout(() => Auth.openPanel(), 300);
+      return;
+    }
     const pos = GPS.lastPos || { lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] };
     const desc = document.getElementById('report-desc').value.trim();
 
@@ -690,18 +702,33 @@ document.querySelectorAll('#report-severity-grid .type-btn').forEach(btn => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Auth Module — Step 7
+// Auth Module — Supabase Auth 기반
 // ═══════════════════════════════════════════════════════════════════════════
 const Auth = {
   user: null,
 
-  init() {
-    const token = localStorage.getItem('sr_token');
-    if (!token) return;
-    API.getMe(token).then(u => {
-      if (u.id) { this.user = u; this._updateUI(); }
-      else localStorage.removeItem('sr_token');
-    }).catch(() => {});
+  async init() {
+    // 기존 세션 복원
+    const { data: { session } } = await sb.auth.getSession();
+    if (session?.user) this._setUser(session.user);
+
+    // 로그인/로그아웃 상태 변경 감지
+    sb.auth.onAuthStateChange((_event, session) => {
+      this._setUser(session?.user || null);
+    });
+  },
+
+  _setUser(user) {
+    if (user) {
+      this.user = {
+        id:    user.id,
+        email: user.email,
+        name:  user.user_metadata?.name || user.email.split('@')[0]
+      };
+    } else {
+      this.user = null;
+    }
+    this._updateUI();
   },
 
   openPanel() {
@@ -720,40 +747,32 @@ const Auth = {
   async login() {
     const email = document.getElementById('login-email').value.trim();
     const pw    = document.getElementById('login-pw').value;
-    if (!email || !pw) { Toast.show('Please fill in all fields'); return; }
+    if (!email || !pw) { Toast.show('이메일과 비밀번호를 입력하세요'); return; }
     try {
       const res = await API.login(email, pw);
       if (res.error) { Toast.show(res.error); return; }
-      this._onSuccess(res);
-    } catch { Toast.show('Connection error'); }
+      Panels.closeAll();
+      Toast.show(`환영합니다, ${res.name}! 🚴`);
+    } catch { Toast.show('연결 오류가 발생했습니다'); }
   },
 
   async signup() {
     const name  = document.getElementById('signup-name').value.trim();
     const email = document.getElementById('signup-email').value.trim();
     const pw    = document.getElementById('signup-pw').value;
-    if (!name || !email || !pw) { Toast.show('Please fill in all fields'); return; }
-    if (pw.length < 6) { Toast.show('Password must be at least 6 characters'); return; }
+    if (!name || !email || !pw) { Toast.show('모든 항목을 입력하세요'); return; }
+    if (pw.length < 6) { Toast.show('비밀번호는 6자 이상이어야 합니다'); return; }
     try {
       const res = await API.signup(email, pw, name);
       if (res.error) { Toast.show(res.error); return; }
-      this._onSuccess(res);
-    } catch { Toast.show('Connection error'); }
+      Panels.closeAll();
+      Toast.show('가입 완료! 이메일을 확인해 주세요 📧');
+    } catch { Toast.show('연결 오류가 발생했습니다'); }
   },
 
-  _onSuccess(res) {
-    this.user = res;
-    localStorage.setItem('sr_token', res.token);
-    this._updateUI();
-    Panels.closeAll();
-    Toast.show(`Welcome, ${res.name}! 🚴`);
-  },
-
-  logout() {
-    this.user = null;
-    localStorage.removeItem('sr_token');
-    this._updateUI();
-    Toast.show('Logged out');
+  async logout() {
+    await API.logout();
+    Toast.show('로그아웃 완료');
   },
 
   _updateUI() {
@@ -767,12 +786,12 @@ const Auth = {
 
   _showProfile() {
     const u = this.user;
-    if (confirm(`Logged in as:\n${u.name} (${u.email})\n\nLog out?`)) this.logout();
+    if (confirm(`로그인: ${u.name} (${u.email})\n\n로그아웃 하시겠습니까?`)) this.logout();
   }
 };
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 loadZones();
 Settings.load();
-Auth.init();
-GPS.startTracking(); // 앱 시작 시 자동으로 현재 위치 추적 시작
+Auth.init();          // Supabase 세션 복원 (async, 완료 시 UI 자동 업데이트)
+GPS.startTracking();  // 앱 시작 시 자동으로 현재 위치 추적 시작
