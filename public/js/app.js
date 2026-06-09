@@ -100,46 +100,36 @@ function formatDate(isoStr) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TTS 모듈 — iOS 백그라운드 차단 대응 3단계 폴백
+// TTS 모듈 — 위험 구역 음성 안내 (설정 토글 연동)
 //
-// 1단계: 화면 켜짐 → speechSynthesis 정상 재생
-// 2단계: 화면 꺼짐(document.hidden) → speechSynthesis 시도 + 0.8초 내 미동작 시
-//         HazardAudio 톤 패턴으로 즉시 폴백 (Web Audio API는 오디오 세션 활성 시 동작)
-// 3단계: speechSynthesis 자체 없음 → HazardAudio 바로 실행
+// 화면 켜짐:  speechSynthesis + 한국어 보이스 명시 지정으로 확실한 음성 출력
+// 화면 잠금:  speechSynthesis iOS 보안 차단 → 경고음(HazardAudio)만으로 충분하므로 skip
+// 오디오 세션 전환은 Alert.show/dismiss 에서 일괄 관리 (중복 전환 방지)
 // ═══════════════════════════════════════════════════════════════════════════
 const TTS = {
-  speak(text, zoneType) {
+  speak(text) {
     if (!Settings.get().ttsEnabled) return;
+    // 잠금 화면: iOS가 speechSynthesis 차단 — HazardAudio 비프음으로 대체 충분
+    if (document.hidden) return;
+    if (!window.speechSynthesis) return;
 
-    // 화면 꺼짐: speechSynthesis는 iOS 보안 정책으로 차단 → 톤 패턴 즉시 재생
-    if (document.hidden) {
-      HazardAudio.play(zoneType || 'other');
-      return;
-    }
-
-    if (!window.speechSynthesis) {
-      HazardAudio.play(zoneType || 'other');
-      return;
-    }
-
-    if (window.speechSynthesis.paused) window.speechSynthesis.resume();
     window.speechSynthesis.cancel();
 
-    const u   = new SpeechSynthesisUtterance(text);
-    u.lang    = 'ko-KR';
-    u.rate    = 0.95;
-    u.volume  = 1.0;
-    u.pitch   = 1.0;
-    // TTS 엔진 오류(백그라운드 차단 포함) 시 즉시 톤 폴백
-    u.onerror = () => HazardAudio.play(zoneType || 'other');
-    window.speechSynthesis.speak(u);
-
-    // iOS가 speechSynthesis를 조용히 무시할 경우 0.8초 후 톤 폴백 확인
+    // iOS에서 cancel() 직후 즉시 speak() 하면 묵음이 되는 버그 → 150ms 딜레이
     setTimeout(() => {
-      if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
-        HazardAudio.play(zoneType || 'other');
-      }
-    }, 800);
+      const u  = new SpeechSynthesisUtterance(text);
+      u.lang   = 'ko-KR';
+      u.rate   = 0.9;
+      u.volume = 1.0;
+      u.pitch  = 1.0;
+
+      // 한국어 음성을 명시적으로 지정 (미지정 시 iOS PWA에서 묵음 발생 가능)
+      const voices = window.speechSynthesis.getVoices();
+      const kor    = voices.find(v => v.lang === 'ko-KR' || v.lang === 'ko_KR' || v.lang.startsWith('ko'));
+      if (kor) u.voice = kor;
+
+      window.speechSynthesis.speak(u);
+    }, 150);
   },
 
   getZoneMessage(zone) {
@@ -168,43 +158,44 @@ const WakeLock = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// iOS Silent Audio Loop — 듀얼 파이프라인 (HTML5 Audio + Web Audio API)
+// iOS Silent Audio Loop — Web Audio API 전용 (HTML5 Audio 완전 제거)
 //
-// iOS는 <audio> 태그로 실제 오디오 파일이 재생 중인 앱을 '음악 앱'으로 취급.
-// 화면이 꺼져도 GPS 콜백·JS 타이머를 절대 슬립시키지 않음.
-// Web Audio API 단독으로는 iOS 15+ 에서 화면 잠금 시 세션이 끊길 수 있어
-// HTML5 <audio loop> 를 1차, Web Audio API 를 2차로 동시 운영.
+// [변경 이유]
+//  HTML5 <audio> 태그로 WAV 재생 시 iOS가 앱을 '음악 앱'으로 인식:
+//    - 잠금화면·알림창에 미디어 플레이어 위젯(재생/일시정지 버튼) 표시
+//    - 다이나믹 아일랜드·상태바에 오디오 재생 중 아이콘 상주
+//    - 타 음악 앱(멜론, 유튜브 뮤직 등)의 오디오 세션 강제 중단
+//
+// [대체 구현]
+//  - Web Audio API 극소음(-100dB) 노이즈 루프: 오디오 세션 살아있는 동안 iOS JS·GPS 유지
+//  - navigator.audioSession.type = 'ambient' (iOS 16.4+): 타 앱 음악과 공존(믹싱)
+//  - navigator.mediaSession 메타데이터 null 강제 설정: 잠금화면 위젯 억제
+//  - setMode('transient'): 위험 경고 시 배경 음악 덕킹, 경고 후 'ambient' 복귀
 // ═══════════════════════════════════════════════════════════════════════════
 const SilentAudioLoop = {
   _ctx:      null,
   _src:      null,
-  _audioEl:  null,   // HTML5 <audio> — iOS 오디오 세션 1차 주체
   _unlocked: false,
+  _mode:     'ambient',
 
   async unlock() {
     if (this._unlocked) { this.resume(); return; }
 
-    // ── 1차: HTML5 <audio loop> + 실제 WAV 파일 ─────────────────────────
-    // iOS는 이 방식을 '진짜 음악 앱'으로 인식해 백그라운드 제한 완전 해제
-    try {
-      this._audioEl = document.createElement('audio');
-      this._audioEl.src = '/assets/silent.wav';
-      this._audioEl.loop = true;
-      this._audioEl.volume = 0.01;          // 거의 무음 — 0이면 세션 인식 안됨
-      this._audioEl.setAttribute('playsinline', '');
-      this._audioEl.setAttribute('webkit-playsinline', '');
-      document.body.appendChild(this._audioEl);
-      await this._audioEl.play();
-    } catch (e) {}
+    // 잠금화면 미디어 플레이어 위젯 전면 억제
+    this._suppressMediaSession();
 
-    // ── 2차: Web Audio API 무한 노이즈 루프 — 오디오 합성 컨텍스트 공유용 ─
+    // iOS 오디오 세션: ambient = 타 앱 음악과 공존, 방해 없음
+    this._applyAudioSession('ambient');
+
+    // Web Audio API 극소음 루프 — 오디오 세션 활성 상태 유지 (백그라운드 GPS·JS 동작 보장)
     try {
       this._ctx = new (window.AudioContext || window.webkitAudioContext)();
       const sr  = this._ctx.sampleRate;
-      const buf = this._ctx.createBuffer(1, sr, sr);
+      const len = sr * 3; // 3초 버퍼 반복
+      const buf = this._ctx.createBuffer(1, len, sr);
       const d   = buf.getChannelData(0);
-      // 완전 무음(0)을 피하기 위한 극소음 (-80 dB)
-      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * 0.0001;
+      // -100dB 극소음 (완전 무음 0 이면 iOS가 세션 비활성으로 판단)
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * 0.00001;
 
       const gain = this._ctx.createGain();
       gain.gain.value = 1;
@@ -217,14 +208,36 @@ const SilentAudioLoop = {
 
       if (this._ctx.state === 'suspended') await this._ctx.resume();
       this._src.start(0);
-    } catch (e) {}
+    } catch(e) {}
 
     this._unlocked = true;
   },
 
   resume() {
     if (this._ctx?.state === 'suspended') this._ctx.resume().catch(() => {});
-    if (this._audioEl?.paused) this._audioEl.play().catch(() => {});
+    this._suppressMediaSession();
+    this._applyAudioSession(this._mode);
+  },
+
+  // 경고음·TTS 재생 시 'transient'(배경 음악 덕킹), 경고 종료 후 'ambient'(복귀)
+  setMode(mode) {
+    this._mode = mode;
+    this._applyAudioSession(mode);
+  },
+
+  _applyAudioSession(type) {
+    if (navigator.audioSession) {
+      try { navigator.audioSession.type = type; } catch(e) {}
+    }
+  },
+
+  _suppressMediaSession() {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.metadata     = null;
+    navigator.mediaSession.playbackState = 'none';
+    ['play','pause','stop','seekbackward','seekforward','previoustrack','nexttrack'].forEach(a => {
+      try { navigator.mediaSession.setActionHandler(a, null); } catch(e) {}
+    });
   },
 
   getContext() { return this._ctx; }
@@ -233,7 +246,7 @@ const SilentAudioLoop = {
 // ═══════════════════════════════════════════════════════════════════════════
 // HazardAudio — 위험 유형별 구별 가능한 경고음 합성
 // Web Audio API 로 직접 합성 → 오디오 세션 활성 상태에서 화면 꺼짐에도 100% 동작
-// speechSynthesis 차단 시 이 톤 패턴이 '음성 대체' 역할 수행
+// 오디오 세션 모드 전환(덕킹)은 Alert.show / Alert.dismiss 에서 일괄 관리
 // ═══════════════════════════════════════════════════════════════════════════
 const HazardAudio = {
   // [주파수Hz, 지속ms] — 0Hz는 무음 간격
@@ -814,6 +827,11 @@ document.addEventListener('visibilitychange', () => {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Alert 모듈 — 최소 UI, 5초 자동 소멸, TTS + 진동 + 음향 동시
+//
+// 오디오 덕킹 흐름:
+//   show() → audioSession 'transient' 전환 (배경 음악 자동 감소)
+//            HazardAudio 경고음 + TTS 음성이 메인 오디오로 선명하게 출력
+//   dismiss() → audioSession 'ambient' 복귀 (배경 음악 원래 볼륨으로 자동 복구)
 // ═══════════════════════════════════════════════════════════════════════════
 const Alert = {
   show(zone) {
@@ -835,11 +853,14 @@ const Alert = {
     // 강화 진동 — 화면 꺼짐 상태에서도 navigator.vibrate 는 동작
     if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 800]);
 
-    // 위험 유형별 구별 가능한 경고음 (Web Audio API — 오디오 세션 활성 시 화면 꺼짐에도 동작)
+    // 배경 음악 덕킹 시작: ambient → transient (타 앱 음악 볼륨 자동 감소)
+    SilentAudioLoop.setMode('transient');
+
+    // 위험 유형별 경고음 (Web Audio API — 오디오 세션 활성 시 화면 꺼짐에도 동작)
     HazardAudio.play(zone.type);
 
-    // TTS: 화면 켜짐 → 실제 음성 / 화면 꺼짐 → 톤 패턴 자동 폴백
-    TTS.speak(ttsMsg, zone.type);
+    // TTS 음성 안내 (화면 켜짐 + 설정 ON일 때만, 잠금 화면은 경고음으로 충분)
+    TTS.speak(ttsMsg);
 
     // SW 알림 항상 발송 — 화면 꺼짐 시 잠금화면에 팝업, 켜짐 시에도 알림 센터 기록
     sendSwAlert(zone);
@@ -861,6 +882,9 @@ const Alert = {
     banner.classList.add('fade-out');
     setTimeout(() => { banner.classList.remove('show', 'fade-out'); }, 400);
     currentAlertZone = null;
+
+    // 배경 음악 덕킹 해제: transient → ambient (타 앱 음악 볼륨 원래대로 자동 복구)
+    SilentAudioLoop.setMode('ambient');
   }
 };
 

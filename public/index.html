@@ -1,39 +1,43 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>SmartRider – Safe Cycling</title>
+  <title>Safe Ride — 안전 라이딩</title>
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
   <meta name="theme-color" content="#0f172a" />
-
-  <!-- iOS 홈화면 앱 설정 -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="SmartRider" />
+  <meta name="apple-mobile-web-app-title" content="Safe Ride" />
   <link rel="apple-touch-icon" href="/icons/icon-180.png" />
 
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Leaflet Rotate (지도 방향 자동 회전) — 로컬 파일로 안정 제공 -->
+  <script src="/js/leaflet-rotate.js"></script>
   <!-- Supabase JS SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
   <style>
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #f1f5f9; overflow: hidden; }
-    #map { width: 100%; height: 100vh; z-index: 1; }
-    .leaflet-tile { filter: brightness(0.6) saturate(0.8); }
+    body { margin:0; font-family:'Segoe UI',system-ui,sans-serif; background:#0f172a; color:#f1f5f9; overflow:hidden; }
+    #map { width:100%; height:100vh; z-index:1; }
+
+    /* 지도 테마 — dark_all 타일은 이미 어두운 배경/밝은 도로선 제공 */
+    /* brightness > 0.45 이하는 도로선까지 검게 덮어 지도 불가시 원인 */
+    .leaflet-tile { filter: saturate(0.25) brightness(0.88); }
 
     /* Alert banner */
-    #alert-banner { position:fixed; top:0; left:0; right:0; z-index:1000; transform:translateY(-110%); transition:transform 0.4s cubic-bezier(0.34,1.56,0.64,1); }
-    #alert-banner.show { transform:translateY(0); }
+    #alert-banner { position:fixed; top:0; left:0; right:0; z-index:1000; transform:translateY(-110%); transition:transform 0.4s cubic-bezier(0.34,1.56,0.64,1), opacity 0.4s; opacity:1; }
+    #alert-banner.show { transform:translateY(0); opacity:1; }
+    #alert-banner.fade-out { opacity:0; transform:translateY(-20px); }
 
     /* Panels */
     #bottom-panel { position:fixed; bottom:0; left:0; right:0; z-index:100; background:linear-gradient(to top,rgba(15,23,42,0.98) 60%,transparent); padding:0 16px 24px; }
-    #top-bar { position:fixed; top:0; left:0; right:0; z-index:100; background:linear-gradient(to bottom,rgba(15,23,42,0.95) 60%,transparent); padding:16px; }
+    #top-bar { position:fixed; top:0; left:0; right:0; z-index:100; background:linear-gradient(to bottom,rgba(15,23,42,0.95) 60%,transparent); padding:12px 16px; }
 
     .slide-panel { position:fixed; inset-x-0; bottom:0; z-index:200; background:#0f172a; border-top:1px solid #334155; border-radius:24px 24px 0 0; padding:20px 20px 32px; transform:translateY(100%); transition:transform 0.3s ease; box-shadow:0 -8px 32px rgba(0,0,0,0.5); }
     .slide-panel.open { transform:translateY(0); }
@@ -41,25 +45,42 @@
     .panel-overlay.open { display:block; }
 
     .stat-card { background:rgba(30,41,59,0.9); border:1px solid rgba(71,85,105,0.5); border-radius:14px; backdrop-filter:blur(12px); }
-    .zone-badge { display:inline-flex; align-items:center; gap:6px; background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); border-radius:20px; padding:4px 12px; font-size:12px; color:#fca5a5; }
+    .zone-badge { display:inline-flex; align-items:center; gap:6px; background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); border-radius:20px; padding:4px 10px; font-size:12px; color:#fca5a5; }
 
     @keyframes danger-pulse { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.15);opacity:0.7} }
-    .danger-pulse { animation:danger-pulse 1.5s infinite; }
+    .danger-pulse { animation:danger-pulse 1.2s infinite; }
 
     .leaflet-popup-content-wrapper { background:#1e293b; color:#f1f5f9; border:1px solid #334155; border-radius:12px; }
     .leaflet-popup-tip { background:#1e293b; }
 
-    /* History list */
     .ride-card { background:rgba(30,41,59,0.8); border:1px solid #334155; border-radius:12px; padding:14px; }
 
-    /* Report form */
     .type-btn { background:rgba(30,41,59,0.7); border:1px solid #475569; border-radius:12px; cursor:pointer; transition:all 0.15s; text-align:center; color:#f1f5f9; }
     .type-btn.selected { background:rgba(34,197,94,0.2); border-color:#22c55e; color:#4ade80; }
     .type-btn.selected .sub-label { color:#86efac; }
 
-    /* Toast */
     #toast { position:fixed; bottom:120px; left:16px; right:16px; transform:translateY(20px); background:#1e293b; border:1px solid #334155; border-radius:12px; padding:10px 16px; font-size:13px; opacity:0; transition:all 0.3s; z-index:500; text-align:center; line-height:1.4; }
     #toast.show { opacity:1; transform:translateY(0); }
+
+    /* 투표 팝업 슬라이드업 */
+    #vote-popup { position:fixed; bottom:-100%; left:0; right:0; z-index:300; background:#0f172a; border-top:2px solid #f97316; border-radius:28px 28px 0 0; padding:28px 20px 44px; transition:bottom 0.45s cubic-bezier(0.22,1,0.36,1); box-shadow:0 -10px 40px rgba(0,0,0,0.7); }
+    #vote-popup.open { bottom:0; }
+
+    /* 필터 토글 버튼 */
+    .filter-btn { border-radius:20px; padding:5px 14px; font-size:12px; font-weight:600; cursor:pointer; border:1px solid; transition:all 0.15s; }
+    .filter-btn.active-high  { background:rgba(239,68,68,0.25);  border-color:#ef4444; color:#fca5a5; }
+    .filter-btn.active-medium{ background:rgba(249,115,22,0.25); border-color:#f97316; color:#fdba74; }
+    .filter-btn.active-low   { background:rgba(234,179,8,0.25);  border-color:#eab308; color:#fde047; }
+    .filter-btn.active-all   { background:rgba(99,102,241,0.25); border-color:#6366f1; color:#a5b4fc; }
+    .filter-btn.inactive     { background:rgba(30,41,59,0.5); border-color:#475569; color:#64748b; }
+
+    /* 레벨 뱃지 */
+    .level-bar { height:6px; background:#1e293b; border-radius:3px; overflow:hidden; }
+    .level-bar-fill { height:100%; background:linear-gradient(90deg,#22c55e,#3b82f6); border-radius:3px; transition:width 0.5s ease; }
+
+    /* 내 위치 버튼 — 기본: 반투명 / 활성: 파란색 강조 */
+    #loc-btn { transition: background 0.25s, box-shadow 0.25s, opacity 0.25s; opacity:0.5; }
+    #loc-btn.loc-active { opacity:1; background:#3b82f6 !important; box-shadow:0 0 0 4px rgba(59,130,246,0.3); }
   </style>
 </head>
 <body>
@@ -73,24 +94,28 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/>
         </svg>
       </div>
-      <span class="font-bold text-lg tracking-tight">SmartRider</span>
+      <span class="font-bold text-lg tracking-tight">Safe Ride</span>
     </div>
-    <div class="flex items-center gap-3">
-      <div id="gps-badge" class="flex items-center gap-1.5 bg-slate-700/80 border border-slate-600 rounded-full px-3 py-1">
-        <span class="w-2 h-2 bg-slate-400 rounded-full" id="gps-dot"></span>
-        <span class="text-slate-400 text-xs font-medium" id="gps-label">GPS</span>
+    <div class="flex items-center gap-2">
+      <!-- GPS 상태 표시등 — 점(dot)만, 컬러로 상태 구분 -->
+      <div id="gps-badge" class="flex items-center justify-center w-7 h-7 bg-slate-700/80 border border-slate-600 rounded-full" title="GPS 상태">
+        <span class="w-3 h-3 bg-slate-400 rounded-full" id="gps-dot"></span>
       </div>
-      <button onclick="Auth.openPanel()" id="auth-btn" class="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center border border-slate-600 hover:bg-slate-700 transition-colors" title="Account">
+      <!-- 프로필 / 로그인 버튼 -->
+      <button onclick="Auth.openPanel()" id="auth-btn"
+        class="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center border border-slate-600 hover:bg-slate-700 transition-colors" title="내 프로필">
         <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
         </svg>
       </button>
-      <button onclick="Panels.openHistory()" class="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center border border-slate-600 hover:bg-slate-700 transition-colors" title="Ride History">
+      <button onclick="Panels.openHistory()"
+        class="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center border border-slate-600 hover:bg-slate-700 transition-colors" title="라이딩 기록">
         <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
         </svg>
       </button>
-      <button onclick="Panels.openSettings()" class="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center border border-slate-600 hover:bg-slate-700 transition-colors">
+      <button onclick="Panels.openSettings()"
+        class="w-9 h-9 bg-slate-800 rounded-full flex items-center justify-center border border-slate-600 hover:bg-slate-700 transition-colors">
         <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
@@ -98,12 +123,12 @@
       </button>
     </div>
   </div>
-  <div class="mt-3 flex items-center gap-2">
+  <div class="mt-2 flex items-center gap-2">
     <span class="zone-badge" id="danger-count-badge">
       <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
       </svg>
-      <span id="danger-count-text">Loading zones...</span>
+      <span id="danger-count-text">로딩 중...</span>
     </span>
   </div>
 </div>
@@ -111,33 +136,18 @@
 <!-- MAP -->
 <div id="map"></div>
 
-<!-- ALERT BANNER -->
+<!-- ALERT BANNER — 최소화: 텍스트 위주, 버튼 없음, 5초 자동 사라짐 -->
 <div id="alert-banner">
-  <div class="mx-4 mt-4 rounded-2xl p-4 border border-red-500/50 bg-red-950/90 backdrop-blur-md shadow-2xl">
-    <div class="flex items-start gap-3">
-      <div class="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0 danger-pulse">
-        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <div class="mx-3 mt-3 rounded-2xl p-4 border border-red-500/60 bg-red-950/95 backdrop-blur-md shadow-2xl">
+    <div class="flex items-center gap-3">
+      <div class="w-12 h-12 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0 danger-pulse">
+        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
         </svg>
       </div>
       <div class="flex-1">
-        <div class="flex items-center justify-between">
-          <span class="font-bold text-red-300 text-base" id="alert-title">⚠️ Danger Zone!</span>
-          <button onclick="Alert.dismiss()" class="text-slate-400 hover:text-white">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-            </svg>
-          </button>
-        </div>
-        <p class="text-red-200/80 text-sm mt-1" id="alert-desc">Danger zone ahead.</p>
-        <div class="flex gap-2 mt-3">
-          <button onclick="Alert.focusOnMap()" class="flex-1 bg-red-500 hover:bg-red-400 text-white text-sm font-semibold py-2 rounded-xl transition-colors">지도 보기</button>
-          <button onclick="Alert.dismiss()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold py-2 rounded-xl transition-colors">확인</button>
-        </div>
-        <button id="alert-clear-btn" onclick="Alert.requestClear()"
-          class="hidden w-full mt-2 py-2 bg-green-500/10 border border-green-500/40 hover:bg-green-500/20 text-green-400 text-xs font-medium rounded-xl transition-colors">
-          ✓ 이 구역 위험 없음 — 해제 신청
-        </button>
+        <div class="font-black text-red-300 text-lg leading-tight" id="alert-title">⚠️ 위험 구역!</div>
+        <div class="text-red-100 text-base font-semibold mt-1 leading-snug" id="alert-desc">위험 구역 주의하세요.</div>
       </div>
     </div>
   </div>
@@ -161,240 +171,328 @@
   </div>
   <button id="ride-btn" onclick="Ride.toggle()"
     class="w-full py-4 rounded-2xl font-bold text-base tracking-wide shadow-lg transition-all bg-green-500 hover:bg-green-400 active:scale-95 text-white">
-    Start Ride
+    라이딩 시작
   </button>
-  <div class="mt-3 flex items-center justify-between">
-    <div class="text-slate-400 text-xs flex items-center gap-1">
-      <span class="text-slate-300 font-medium" id="route-name">SmartRider</span>
-    </div>
-    <button onclick="Panels.openZoneList()" class="text-xs text-red-400 underline underline-offset-2">See Danger Zones</button>
+  <div class="mt-2 flex items-center justify-between">
+    <span class="text-slate-400 text-xs font-medium">Safe Ride</span>
+    <button onclick="Panels.openZoneList()" class="text-xs text-red-400 underline underline-offset-2">위험 구역 보기</button>
   </div>
 </div>
 
-<!-- REPORT FAB -->
+<!-- REPORT FAB (위치 상향 조정 — 겹침 방지) -->
 <button onclick="Panels.openReport()"
-  class="fixed right-4 z-100 w-12 h-12 bg-orange-500 hover:bg-orange-400 rounded-full shadow-lg flex items-center justify-center transition-all active:scale-90"
-  style="bottom:200px; z-index:101;">
-  <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  class="fixed right-4 w-14 h-14 bg-orange-500 hover:bg-orange-400 rounded-full shadow-lg flex items-center justify-center transition-all active:scale-90"
+  style="bottom:260px; z-index:101;" title="위험 신고">
+  <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
   </svg>
 </button>
 
-<!-- OVERLAY (shared) -->
+<!-- 내 위치 버튼 (Strava 방식 — 탐색 중 강조, 클릭 시 GPS 위치로 복귀) -->
+<button id="loc-btn" onclick="LocBtn.flyToMe()"
+  class="fixed right-4 w-12 h-12 bg-slate-800 border border-slate-600 rounded-full shadow-lg flex items-center justify-center active:scale-90"
+  style="bottom:200px; z-index:101;" title="내 위치로 이동">
+  <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2">
+    <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/>
+    <path stroke-linecap="round" d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+    <circle cx="12" cy="12" r="7"/>
+  </svg>
+</button>
+
+<!-- OVERLAY -->
 <div id="panel-overlay" class="panel-overlay" onclick="Panels.closeAll()"></div>
 
-<!-- ── ZONE LIST PANEL ─────────────────────────────────────────────────────── -->
-<div id="zone-list-panel" class="slide-panel" style="max-height:70vh;overflow-y:auto;">
+<!-- ── 위험 구역 목록 패널 (총 개수 + 심각도 필터) ─────────────────────────── -->
+<div id="zone-list-panel" class="slide-panel" style="max-height:75vh;overflow-y:auto;">
   <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
-  <h2 class="font-bold text-lg mb-4 flex items-center gap-2">
-    <span class="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center text-xs font-bold">!</span>
-    Danger Zones
-  </h2>
+
+  <!-- 대시보드 헤더 -->
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="font-bold text-lg flex items-center gap-2">
+      <span class="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center text-xs font-bold">!</span>
+      위험 구역
+    </h2>
+    <span id="zone-total-count" class="text-xs bg-red-500/20 text-red-400 border border-red-500/30 rounded-full px-3 py-1 font-bold">총 0개</span>
+  </div>
+
+  <!-- 심각도 필터 -->
+  <div class="flex gap-2 mb-4 overflow-x-auto pb-1" id="zone-filters">
+    <button class="filter-btn active-all" data-filter="all" onclick="ZoneList.filter('all')">전체</button>
+    <button class="filter-btn inactive" data-filter="high" onclick="ZoneList.filter('high')">🔴 위험</button>
+    <button class="filter-btn inactive" data-filter="medium" onclick="ZoneList.filter('medium')">🟠 주의</button>
+    <button class="filter-btn inactive" data-filter="low" onclick="ZoneList.filter('low')">🟡 경계</button>
+  </div>
+
   <div id="zone-list-items" class="space-y-3 pb-2"></div>
-  <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 rounded-xl text-sm text-slate-300 hover:bg-slate-600 transition-colors">Close</button>
+  <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 rounded-xl text-sm text-slate-300 hover:bg-slate-600 transition-colors">닫기</button>
 </div>
 
-<!-- ── REPORT PANEL ─────────────────────────────────────────────────────────── -->
+<!-- ── 위험 신고 패널 ──────────────────────────────────────────────────────── -->
 <div id="report-panel" class="slide-panel" style="max-height:80vh;overflow-y:auto;">
   <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
-  <h2 class="font-bold text-lg mb-1">Report a Hazard</h2>
-  <p class="text-slate-400 text-sm mb-5">Your report helps other riders stay safe.</p>
+  <h2 class="font-bold text-lg mb-1">위험 신고</h2>
+  <p class="text-slate-400 text-sm mb-5">현재 위치의 위험 요소를 신고해 주세요.</p>
 
   <div class="mb-4">
-    <div class="text-xs text-slate-400 mb-3 font-medium uppercase tracking-wider">Hazard Type</div>
+    <div class="text-xs text-slate-400 mb-3 font-medium uppercase tracking-wider">위험 유형</div>
     <div class="grid grid-cols-2 gap-3" id="report-type-grid">
       <button class="type-btn flex flex-col items-center py-5 px-3" data-type="pothole">
         <span class="text-3xl mb-2">🕳️</span>
-        <span class="font-bold text-sm">Pothole</span>
-        <span class="sub-label text-xs text-slate-400 mt-1">포트홀 / 균열</span>
+        <span class="font-bold text-sm">포트홀 / 크랙</span>
+        <span class="sub-label text-xs text-slate-400 mt-1">도로 파손 / 균열</span>
       </button>
       <button class="type-btn flex flex-col items-center py-5 px-3" data-type="slippery">
-        <span class="text-3xl mb-2">💧</span>
-        <span class="font-bold text-sm">Slippery</span>
-        <span class="sub-label text-xs text-slate-400 mt-1">미끄러움 / 맨홀</span>
+        <span class="text-3xl mb-2">🧼</span>
+        <span class="font-bold text-sm">맨홀 / 미끄러움</span>
+        <span class="sub-label text-xs text-slate-400 mt-1">맨홀 / 미끄럼 주의</span>
       </button>
       <button class="type-btn flex flex-col items-center py-5 px-3" data-type="construction">
         <span class="text-3xl mb-2">🚧</span>
-        <span class="font-bold text-sm">Construction</span>
-        <span class="sub-label text-xs text-slate-400 mt-1">도로 공사 / 장애물</span>
+        <span class="font-bold text-sm">도로 / 보도 공사</span>
+        <span class="sub-label text-xs text-slate-400 mt-1">공사 중 / 통제 구간</span>
       </button>
       <button class="type-btn flex flex-col items-center py-5 px-3" data-type="other">
         <span class="text-3xl mb-2">⚠️</span>
-        <span class="font-bold text-sm">Other</span>
-        <span class="sub-label text-xs text-slate-400 mt-1">기타 위험</span>
+        <span class="font-bold text-sm">기타 위험</span>
+        <span class="sub-label text-xs text-slate-400 mt-1">기타 위험 요소</span>
       </button>
     </div>
   </div>
 
   <div class="mb-4">
-    <div class="text-xs text-slate-400 mb-2 font-medium uppercase tracking-wider">Severity</div>
+    <div class="text-xs text-slate-400 mb-2 font-medium uppercase tracking-wider">위험 심각도</div>
     <div class="grid grid-cols-3 gap-2" id="report-severity-grid">
-      <button class="type-btn py-2 px-3 text-sm" data-sev="low">🟡 Low</button>
-      <button class="type-btn selected py-2 px-3 text-sm" data-sev="medium">🟠 Medium</button>
-      <button class="type-btn py-2 px-3 text-sm" data-sev="high">🔴 High</button>
+      <button class="type-btn py-2 px-3 text-sm" data-sev="low">🟡 낮음</button>
+      <button class="type-btn selected py-2 px-3 text-sm" data-sev="medium">🟠 보통</button>
+      <button class="type-btn py-2 px-3 text-sm" data-sev="high">🔴 높음</button>
     </div>
   </div>
 
   <div class="mb-5">
-    <div class="text-xs text-slate-400 mb-2 font-medium uppercase tracking-wider">Description (optional)</div>
-    <textarea id="report-desc" rows="2" placeholder="Add details..."
+    <div class="text-xs text-slate-400 mb-2 font-medium uppercase tracking-wider">상세 내용 (선택)</div>
+    <textarea id="report-desc" rows="2" placeholder="위험 상황을 설명해 주세요..."
       class="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 resize-none focus:outline-none focus:border-green-500"></textarea>
   </div>
 
-  <div class="mb-5 p-3 bg-slate-800 rounded-xl flex items-center gap-2 text-sm">
-    <svg class="w-4 h-4 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
-    </svg>
-    <span id="report-location-text" class="text-slate-300">Current location will be used</span>
-  </div>
-
-  <button onclick="Report.submit()"
+  <button onclick="Report.submit()" id="report-submit-btn"
     class="w-full py-4 bg-orange-500 hover:bg-orange-400 text-white font-bold rounded-2xl transition-colors">
-    Submit Report
+    신고 제출
   </button>
-  <button onclick="Panels.closeAll()" class="mt-2 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">Cancel</button>
+  <button onclick="Panels.closeAll()" class="mt-2 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">취소</button>
 </div>
 
-<!-- ── SETTINGS PANEL ──────────────────────────────────────────────────────── -->
+<!-- ── 설정 패널 ────────────────────────────────────────────────────────────── -->
 <div id="settings-panel" class="slide-panel" style="max-height:80vh;overflow-y:auto;">
   <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
-  <h2 class="font-bold text-lg mb-5">Settings</h2>
+  <h2 class="font-bold text-lg mb-5">설정</h2>
   <div class="space-y-5">
     <div class="flex items-center justify-between">
-      <div><div class="font-medium text-sm">Danger Zone Alerts</div><div class="text-xs text-slate-400">Notify when near a hazard</div></div>
+      <div><div class="font-medium text-sm">위험 구역 알림</div><div class="text-xs text-slate-400">위험 구역 접근 시 알림</div></div>
       <label class="relative inline-flex items-center cursor-pointer">
         <input type="checkbox" id="set-alerts" class="sr-only peer" checked>
         <div class="w-11 h-6 bg-slate-600 peer-checked:bg-green-500 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
       </label>
     </div>
     <div class="flex items-center justify-between">
-      <div><div class="font-medium text-sm">Alert Distance</div><div class="text-xs text-slate-400">Warn when within</div></div>
+      <div><div class="font-medium text-sm">알림 거리</div><div class="text-xs text-slate-400">몇 미터 전에 경고할지</div></div>
       <select id="set-distance" class="bg-slate-700 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white">
-        <option value="50">50 m</option>
+        <option value="30">30 m</option>
+        <option value="50" selected>50 m</option>
         <option value="100">100 m</option>
-        <option value="150">150 m</option>
-        <option value="200" selected>200 m</option>
       </select>
     </div>
     <div class="flex items-center justify-between">
-      <div><div class="font-medium text-sm">Speed Warning</div><div class="text-xs text-slate-400">Alert above this speed</div></div>
+      <div><div class="font-medium text-sm">속도 경고</div><div class="text-xs text-slate-400">초과 시 경고</div></div>
       <select id="set-speed-limit" class="bg-slate-700 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white">
         <option value="20">20 km/h</option>
         <option value="25" selected>25 km/h</option>
         <option value="30">30 km/h</option>
-        <option value="0">Off</option>
+        <option value="0">끄기</option>
       </select>
     </div>
     <div class="flex items-center justify-between">
-      <div><div class="font-medium text-sm">Auto-share Reports</div><div class="text-xs text-slate-400">Share hazards with community</div></div>
+      <div><div class="font-medium text-sm">음성 안내 (TTS)</div><div class="text-xs text-slate-400">위험 구역 음성 경고</div></div>
       <label class="relative inline-flex items-center cursor-pointer">
-        <input type="checkbox" id="set-share" class="sr-only peer">
+        <input type="checkbox" id="set-tts" class="sr-only peer" checked>
         <div class="w-11 h-6 bg-slate-600 peer-checked:bg-green-500 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
       </label>
     </div>
   </div>
-  <button onclick="Settings.save()" class="mt-8 w-full py-4 bg-green-500 rounded-2xl text-sm font-bold text-white hover:bg-green-400 transition-colors">Save Settings</button>
-  <button onclick="Panels.closeAll()" class="mt-2 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">Cancel</button>
+  <button onclick="Settings.save()" class="mt-8 w-full py-4 bg-green-500 rounded-2xl text-sm font-bold text-white hover:bg-green-400 transition-colors">설정 저장</button>
+  <button onclick="Panels.closeAll()" class="mt-2 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">취소</button>
 </div>
 
-<!-- ── HISTORY PANEL ──────────────────────────────────────────────────────── -->
+<!-- ── 라이딩 기록 패널 ────────────────────────────────────────────────────── -->
 <div id="history-panel" class="slide-panel" style="max-height:80vh;overflow-y:auto;">
   <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
-  <h2 class="font-bold text-lg mb-4">Ride History</h2>
+  <h2 class="font-bold text-lg mb-4">라이딩 기록</h2>
   <div id="history-list" class="space-y-3 pb-2">
-    <div class="text-center text-slate-500 py-8 text-sm">No rides yet. Start your first ride!</div>
+    <div class="text-center text-slate-500 py-8 text-sm">아직 기록이 없습니다. 첫 라이딩을 시작해 보세요!</div>
   </div>
-  <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">Close</button>
+  <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">닫기</button>
 </div>
 
-<!-- ── AUTH PANEL ─────────────────────────────────────────────────────────── -->
+<!-- ── 로그인 / 회원가입 패널 ─────────────────────────────────────────────── -->
 <div id="auth-panel" class="slide-panel" style="max-height:85vh;overflow-y:auto;">
   <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
 
-  <!-- Tab switcher -->
   <div class="flex bg-slate-800 rounded-xl p-1 mb-6">
-    <button id="tab-login"  onclick="Auth.switchTab('login')"  class="flex-1 py-2 rounded-lg text-sm font-semibold transition-all bg-slate-700 text-white">Login</button>
-    <button id="tab-signup" onclick="Auth.switchTab('signup')" class="flex-1 py-2 rounded-lg text-sm font-semibold transition-all text-slate-400">Sign Up</button>
+    <button id="tab-login"  onclick="Auth.switchTab('login')"  class="flex-1 py-2 rounded-lg text-sm font-semibold transition-all bg-slate-700 text-white">로그인</button>
+    <button id="tab-signup" onclick="Auth.switchTab('signup')" class="flex-1 py-2 rounded-lg text-sm font-semibold transition-all text-slate-400">회원가입</button>
   </div>
 
-  <!-- Login form -->
+  <!-- 로그인 폼 -->
   <div id="form-login" class="space-y-4">
     <div>
-      <div class="text-xs text-slate-400 mb-1.5 font-medium">Email</div>
-      <input id="login-email" type="email" placeholder="your@email.com"
+      <div class="text-xs text-slate-400 mb-1.5 font-medium">이메일</div>
+      <input id="login-email" type="email" placeholder="이메일 주소"
         class="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"/>
     </div>
     <div>
-      <div class="text-xs text-slate-400 mb-1.5 font-medium">Password</div>
+      <div class="text-xs text-slate-400 mb-1.5 font-medium">비밀번호</div>
       <input id="login-pw" type="password" placeholder="••••••••"
         class="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"/>
     </div>
-    <button onclick="Auth.login()"
+    <button id="login-btn" onclick="Auth.login()"
       class="w-full py-4 bg-green-500 hover:bg-green-400 text-white font-bold rounded-2xl transition-colors mt-2">
-      Login
+      로그인
     </button>
   </div>
 
-  <!-- Signup form -->
+  <!-- 회원가입 폼 -->
   <div id="form-signup" class="space-y-4 hidden">
     <div>
-      <div class="text-xs text-slate-400 mb-1.5 font-medium">Name</div>
-      <input id="signup-name" type="text" placeholder="Your name"
+      <div class="text-xs text-slate-400 mb-1.5 font-medium">닉네임</div>
+      <input id="signup-name" type="text" placeholder="사용하실 닉네임"
         class="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"/>
     </div>
     <div>
-      <div class="text-xs text-slate-400 mb-1.5 font-medium">Email</div>
-      <input id="signup-email" type="email" placeholder="your@email.com"
+      <div class="text-xs text-slate-400 mb-1.5 font-medium">이메일</div>
+      <input id="signup-email" type="email" placeholder="이메일 주소"
         class="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"/>
     </div>
     <div>
-      <div class="text-xs text-slate-400 mb-1.5 font-medium">Password</div>
-      <input id="signup-pw" type="password" placeholder="Min 6 characters"
+      <div class="text-xs text-slate-400 mb-1.5 font-medium">비밀번호</div>
+      <input id="signup-pw" type="password" placeholder="6자 이상"
         class="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"/>
     </div>
-    <button onclick="Auth.signup()"
+    <button id="signup-btn" onclick="Auth.signup()"
       class="w-full py-4 bg-green-500 hover:bg-green-400 text-white font-bold rounded-2xl transition-colors mt-2">
-      Create Account
+      회원가입
     </button>
   </div>
 
-  <button onclick="Panels.closeAll()" class="mt-3 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">Cancel</button>
+  <button onclick="Panels.closeAll()" class="mt-3 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">취소</button>
+</div>
+
+<!-- ── 프로필 패널 (레벨 시스템) ──────────────────────────────────────────── -->
+<div id="profile-panel" class="slide-panel" style="max-height:85vh;overflow-y:auto;">
+  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-6"></div>
+
+  <!-- 아바타 + 기본 정보 -->
+  <div class="flex flex-col items-center mb-6">
+    <div id="profile-avatar" class="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center text-3xl font-black text-white mb-3">?</div>
+    <div id="profile-name" class="font-bold text-xl text-white mb-1">로딩 중...</div>
+    <div id="profile-email" class="text-slate-400 text-sm">...</div>
+  </div>
+
+  <!-- 레벨 카드 -->
+  <div class="bg-slate-800 border border-slate-600 rounded-2xl p-4 mb-4">
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-2">
+        <span id="profile-level-emoji" class="text-2xl">🌱</span>
+        <div>
+          <div id="profile-level-name" class="font-bold text-white text-sm">새싹 라이더</div>
+          <div id="profile-level-num" class="text-xs text-slate-400">Lv.1</div>
+        </div>
+      </div>
+      <div class="text-right">
+        <div id="profile-points" class="font-black text-2xl text-green-400">0</div>
+        <div class="text-xs text-slate-400">안전 포인트</div>
+      </div>
+    </div>
+    <!-- 다음 레벨까지 진행 바 -->
+    <div class="level-bar">
+      <div id="profile-level-bar" class="level-bar-fill" style="width:0%"></div>
+    </div>
+    <div id="profile-next-level" class="text-xs text-slate-500 mt-1 text-right">다음 레벨까지 50pt</div>
+  </div>
+
+  <!-- 통계 -->
+  <div class="grid grid-cols-2 gap-3 mb-6">
+    <div class="bg-slate-800 border border-slate-600 rounded-xl p-3 text-center">
+      <div id="profile-reports" class="text-xl font-black text-orange-400">0</div>
+      <div class="text-xs text-slate-400 mt-0.5">위험 신고</div>
+    </div>
+    <div class="bg-slate-800 border border-slate-600 rounded-xl p-3 text-center">
+      <div id="profile-distance" class="text-xl font-black text-blue-400">0.0</div>
+      <div class="text-xs text-slate-400 mt-0.5">총 주행 (km)</div>
+    </div>
+  </div>
+
+  <!-- 레벨 안내 -->
+  <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-3 mb-5">
+    <div class="text-xs text-slate-400 font-medium mb-2">포인트 획득 방법</div>
+    <div class="space-y-1 text-xs text-slate-300">
+      <div>🕳️ 위험 신고 제출 → +10pt</div>
+      <div>✅ 안전 투표 (이젠 안전해요) → +5pt</div>
+      <div>🚲 주행 10km마다 → +5pt</div>
+    </div>
+  </div>
+
+  <button onclick="Auth.logout()"
+    class="w-full py-4 bg-red-500/20 border border-red-500/40 hover:bg-red-500/30 text-red-400 font-bold rounded-2xl transition-colors">
+    로그아웃
+  </button>
+  <button onclick="Panels.closeAll()" class="mt-2 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">닫기</button>
+</div>
+
+<!-- ── 집단지성 투표 팝업 (반경 이탈 시 슬라이드업) ─────────────────────────── -->
+<div id="vote-popup">
+  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
+  <p class="text-center text-white font-bold text-lg mb-2" id="vote-question">방금 지나온 구역 안전해졌나요?</p>
+  <p class="text-center text-slate-400 text-sm mb-6" id="vote-zone-name">위험 구역</p>
+  <div class="grid grid-cols-2 gap-4">
+    <button onclick="VotePopup.vote('danger')"
+      class="py-6 rounded-2xl bg-red-500/20 border-2 border-red-500/60 text-red-300 font-black text-lg active:scale-95 transition-all hover:bg-red-500/30">
+      🚨<br><span class="text-sm mt-1 block">아직 위험해요</span>
+    </button>
+    <button onclick="VotePopup.vote('safe')"
+      class="py-6 rounded-2xl bg-green-500/20 border-2 border-green-500/60 text-green-300 font-black text-lg active:scale-95 transition-all hover:bg-green-500/30">
+      ✅<br><span class="text-sm mt-1 block">이젠 안전해요</span>
+    </button>
+  </div>
 </div>
 
 <!-- TOAST -->
 <div id="toast"></div>
 
-<!-- CLEAR ZONE MODAL -->
-<div id="clear-zone-modal" class="fixed inset-0 flex items-center justify-center hidden" style="z-index:400">
-  <div class="absolute inset-0 bg-black/70" onclick="ClearZone.cancel()"></div>
-  <div class="relative bg-slate-800 border border-slate-600 rounded-2xl p-6 mx-4 max-w-sm w-full shadow-2xl">
-    <div class="text-center">
-      <div class="w-14 h-14 bg-green-500/20 border-2 border-green-500/40 rounded-full flex items-center justify-center mx-auto mb-4">
-        <svg class="w-7 h-7 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
-        </svg>
-      </div>
-      <h3 class="font-bold text-lg text-white mb-2">위험 구역 해제 신청</h3>
-      <p class="text-slate-300 text-sm font-medium mb-1" id="clear-zone-name"></p>
-      <p class="text-slate-400 text-xs mb-6 leading-relaxed">
-        이 위험 구역이 현재 안전하다고 신고하면<br>다른 라이더에게도 즉시 반영됩니다.
-      </p>
-      <div class="flex gap-3">
-        <button onclick="ClearZone.cancel()"
-          class="flex-1 py-3 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-xl text-sm font-medium transition-colors">
-          취소
-        </button>
-        <button onclick="ClearZone.confirm()"
-          class="flex-1 py-3 bg-green-500 hover:bg-green-400 text-white rounded-xl text-sm font-bold transition-colors">
-          위험 해제 신청
-        </button>
-      </div>
+<!-- GPS 디버그 패널 (야외 현장 테스트용 — 실제 위치 수신 확인) -->
+<div id="gps-debug"
+  style="position:fixed;left:8px;bottom:130px;z-index:998;background:rgba(0,0,0,0.78);color:#86efac;font-size:10px;font-family:monospace;line-height:1.55;padding:6px 10px;border-radius:8px;white-space:pre;pointer-events:none;border:1px solid rgba(34,197,94,0.35);max-width:200px;">
+⚫ GPS 초기화 중...
+</div>
+
+<!-- 이메일 인증 성공 모달 -->
+<div id="verification-modal" class="fixed inset-0 items-center justify-center hidden" style="z-index:600">
+  <div class="absolute inset-0 bg-black/80"></div>
+  <div class="relative bg-slate-800 border border-green-500/40 rounded-3xl p-8 mx-6 max-w-sm w-full shadow-2xl text-center">
+    <div class="w-20 h-20 bg-green-500/20 border-2 border-green-500/50 rounded-full flex items-center justify-center mx-auto mb-5">
+      <svg class="w-10 h-10 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+      </svg>
     </div>
+    <h3 class="font-black text-2xl text-white mb-2">인증되었습니다! ✓</h3>
+    <p class="text-slate-300 text-sm mb-2">이메일 인증이 완료되었습니다.</p>
+    <p class="text-slate-400 text-xs mb-8">이제 Safe Ride의 모든 기능을 이용하실 수 있습니다.</p>
+    <button onclick="VerificationModal.close()"
+      class="w-full py-4 bg-green-500 hover:bg-green-400 text-white font-bold rounded-2xl transition-colors text-lg">
+      라이딩 시작하기 🚲
+    </button>
   </div>
 </div>
 
-<!-- Scripts: 로드 순서 중요 — supabase → client init → api → app -->
+<!-- Scripts -->
 <script src="/js/supabase-client.js"></script>
 <script src="/js/api.js"></script>
 <script src="/js/app.js"></script>
