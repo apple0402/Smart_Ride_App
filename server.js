@@ -52,6 +52,38 @@ app.get('/assets/silent.wav', (req, res) => {
   res.send(buf);
 });
 
+// ── 한국어 TTS 프록시 — CORS 우회 + 서버사이드 캐싱 ─────────────────────────
+// Google Translate TTS (비공식 API, 무료): 직접 호출 시 CORS 차단 → 서버 경유
+// 클라이언트는 /api/tts?text=TEXT 로 요청 → 서버가 MP3 반환
+// SW가 CacheStorage에 7일 캐시 → 오프라인에서도 음성 재생 가능
+app.get('/api/tts', async (req, res) => {
+  const text = String(req.query.text || '').slice(0, 200).trim();
+  if (!text) return res.status(400).json({ error: 'text required' });
+
+  const gtUrl = `https://translate.google.com/translate_tts?ie=UTF-8`
+    + `&q=${encodeURIComponent(text)}&tl=ko&client=tw-ob&ttsspeed=0.85`;
+
+  try {
+    const upstream = await fetch(gtUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+          + '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Referer': 'https://translate.google.com/'
+      },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!upstream.ok) throw new Error(`upstream ${upstream.status}`);
+
+    const audio = await upstream.arrayBuffer();
+    res.set('Content-Type',  'audio/mpeg');
+    res.set('Cache-Control', 'public, max-age=604800'); // 7일
+    res.end(Buffer.from(audio));
+  } catch (e) {
+    console.error('[TTS proxy]', e.message);
+    res.status(503).json({ error: 'TTS unavailable' });
+  }
+});
+
 // ── 정적 파일 서빙 (프론트엔드가 Supabase와 직접 통신) ──────────────────────
 app.use(express.static(path.join(__dirname, 'public')));
 
