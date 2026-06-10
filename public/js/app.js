@@ -129,6 +129,32 @@ const VoiceAlert = {
   },
   _raw:     {},   // type → ArrayBuffer (미디코딩 원본)
   _decoded: {},   // type → AudioBuffer (재생 준비 완료)
+  _CACHE_VER: 'v1', // 메시지 변경 시 캐시 무효화를 위한 버전 키
+
+  // localStorage → ArrayBuffer (크로스 세션 TTS 캐시 복원)
+  _loadCache(type) {
+    try {
+      const b64 = localStorage.getItem(`tts_${this._CACHE_VER}_${type}`);
+      if (!b64) return null;
+      const binary = atob(b64);
+      const buf = new ArrayBuffer(binary.length);
+      const view = new Uint8Array(buf);
+      for (let i = 0; i < binary.length; i++) view[i] = binary.charCodeAt(i);
+      return buf;
+    } catch { return null; }
+  },
+
+  // ArrayBuffer → localStorage base64 (청크 단위 처리로 스택오버플로 방지)
+  _saveCache(type, buf) {
+    try {
+      const bytes = new Uint8Array(buf);
+      let b64 = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk)
+        b64 += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+      localStorage.setItem(`tts_${this._CACHE_VER}_${type}`, btoa(b64));
+    } catch {}
+  },
 
   getZoneMessage(zone) {
     if (zone.type === 'other') return zone.desc || zone.title || this.MESSAGES.other;
@@ -136,14 +162,28 @@ const VoiceAlert = {
   },
 
   // 앱 시작 즉시 호출: AudioContext 없이도 raw MP3 데이터 프리페치
+  // 1순위: localStorage 캐시 (이전 세션 성공분 즉시 재사용)
+  // 2순위: /api/tts 서버 프록시 — 3회 재시도 + 캐시 저장
   async prefetch() {
     await Promise.allSettled(
       Object.entries(this.MESSAGES).map(async ([type, text]) => {
         if (this._raw[type]) return;
-        try {
-          const res = await fetch(`/api/tts?text=${encodeURIComponent(text)}`);
-          if (res.ok) this._raw[type] = await res.arrayBuffer();
-        } catch {}
+        // localStorage 캐시 히트 → 네트워크 요청 없이 즉시 복원
+        const cached = this._loadCache(type);
+        if (cached) { this._raw[type] = cached; return; }
+        // 서버 TTS 프록시 — 3회 재시도 (Google Translate TTS 간헐적 실패 대응)
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const res = await fetch(`/api/tts?text=${encodeURIComponent(text)}`);
+            if (res.ok) {
+              const buf = await res.arrayBuffer();
+              this._raw[type] = buf;
+              this._saveCache(type, buf.slice(0)); // 다음 세션을 위해 localStorage 저장
+              break;
+            }
+          } catch {}
+          if (attempt < 2) await new Promise(r => setTimeout(r, (attempt + 1) * 800));
+        }
       })
     );
     // 프리페치 완료 후 AudioContext가 이미 있으면 바로 디코딩
@@ -185,6 +225,25 @@ const VoiceAlert = {
       try {
         buffer = await ctx.decodeAudioData(this._raw[zoneType].slice(0));
         this._decoded[zoneType] = buffer;
+      } catch {}
+    }
+
+    // 3순위: 프리페치 실패 + 화면 켜짐 상태일 때 즉시 온디맨드 페치 시도 (최대 2초)
+    // 화면 잠금 상태(document.hidden)에서는 네트워크 요청이 블록될 수 있으므로 건너뜀
+    if (!buffer && !document.hidden) {
+      try {
+        const ttsText = this.MESSAGES[zoneType] || text;
+        const res = await Promise.race([
+          fetch(`/api/tts?text=${encodeURIComponent(ttsText)}`),
+          new Promise((_, rej) => setTimeout(() => rej(), 2000))
+        ]);
+        if (res.ok) {
+          const raw = await res.arrayBuffer();
+          this._raw[zoneType] = raw;
+          this._saveCache(zoneType, raw.slice(0));
+          buffer = await ctx.decodeAudioData(raw.slice(0));
+          this._decoded[zoneType] = buffer;
+        }
       } catch {}
     }
 
@@ -411,18 +470,21 @@ const HazardAudio = {
 function playAlertSound() { HazardAudio.play('other'); }
 
 // ── Service Worker 메시지 공통 발행 헬퍼 ────────────────────────────────────
-// [iOS 잠금화면 알림 누락 버그 수정]
-// 기존: controller.postMessage 우선 사용
-//   → iOS 잠금 시 controller 참조가 끊기거나 SW가 메모리 압박으로 종료되면 유실
-// 변경: 항상 navigator.serviceWorker.ready 경유
-//   → ready는 SW가 종료됐다 재시작해도 활성 SW 참조를 안정적으로 반환
-//   → 2초 타임아웃: SW 등록 이상 시 무한 대기 방지
+// [iOS 잠금화면 알림 누락 버그 수정 v2]
+// controller.postMessage()는 await 없는 동기 호출 → iOS 백그라운드 짧은 실행 창에서도 즉시 전달
+// 기존 ready+2초 타임아웃은 iOS 백그라운드에서 Promise 미소태스크 지연으로 타임아웃 빈번 발생
+// ● 빠른 경로(Fast path): navigator.serviceWorker.controller — Promise 없음, 즉시 동기 postMessage
+// ● 느린 경로(Fallback): 최초 설치 직후 controller가 null인 경우에만 ready 경유 (타임아웃 5초)
 async function sendSwMessage(data) {
   if (!('serviceWorker' in navigator)) return;
   try {
+    // Fast path: controller는 SW 활성화 후 항상 유효 → await 없이 즉시 전달
+    const ctrl = navigator.serviceWorker.controller;
+    if (ctrl) { ctrl.postMessage(data); return; }
+    // Fallback: 최초 설치 시만 실행 (controller가 아직 null인 경우)
     const reg = await Promise.race([
       navigator.serviceWorker.ready,
-      new Promise((_, rej) => setTimeout(() => rej(new Error('SW ready timeout')), 2000))
+      new Promise((_, rej) => setTimeout(() => rej(), 5000))
     ]);
     if (reg?.active) reg.active.postMessage(data);
   } catch {}
@@ -522,6 +584,18 @@ function haversine(lat1, lng1, lat2, lng2) {
   return R*2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
+// ── 원형 평균(Circular Mean) — 헤딩 이동 평균 필터용 ─────────────────────────
+// 일반 산술 평균 시 350°·10° 평균이 180°로 오계산되는 문제 해결 (사인·코사인 분해)
+function circularMean(angles) {
+  if (!angles.length) return 0;
+  let sinSum = 0, cosSum = 0;
+  for (const a of angles) {
+    sinSum += Math.sin(a * Math.PI / 180);
+    cosSum += Math.cos(a * Math.PI / 180);
+  }
+  return (Math.atan2(sinSum, cosSum) * 180 / Math.PI + 360) % 360;
+}
+
 // ── 근접 감지 + 구역 진입/이탈 추적 (히스테리시스 적용) ─────────────────────
 // enteredZones Map 구조: zoneId → entryTimestamp
 // 진입 기준: alertDist 이하 / 이탈 확정: alertDist + EXIT_HYSTERESIS 초과
@@ -580,7 +654,7 @@ function checkProximity(lat, lng) {
 const GpsDebug = {
   _el: null,
 
-  init() { this._el = document.getElementById('gps-debug'); },
+  init() { this._el = document.getElementById('gps-info-text'); },
 
   update(state, lat, lng, accuracy, msg) {
     if (!this._el) return;
@@ -600,6 +674,69 @@ const GpsDebug = {
       text = `⚫ GPS 꺼짐\n${t}`;
     }
     this._el.textContent = text;
+
+    // GPS 미수신 시 SOS 버튼 반투명 처리 — 위치 없으면 전송 불가 상태를 시각적으로 표시
+    const sosBtn = document.getElementById('sos-btn');
+    if (sosBtn && !sosBtn.disabled) {
+      const ready = (state === 'on' && lat != null);
+      sosBtn.style.opacity = ready ? '1' : '0.45';
+      sosBtn.style.filter  = ready ? '' : 'grayscale(0.4)';
+    }
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SOS 모듈 — 원클릭 위급 상황 구조 요청
+// Web Share API → 카카오톡·SMS·119 등으로 실시간 GPS 좌표 즉시 전파
+// + Supabase emergency_logs 테이블에 사고 순간 위치 자동 저장 (관제 연동용)
+// ═══════════════════════════════════════════════════════════════════════════
+const SOS = {
+  async trigger() {
+    const pos = GPS.lastPos;
+    if (!pos) {
+      // GPS 미수신 — 진동으로 실패 피드백
+      if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+      Toast.show('GPS 위치 수신 전입니다. 잠시 후 다시 시도해 주세요.');
+      return;
+    }
+
+    const btn = document.getElementById('sos-btn');
+    if (btn) { btn.textContent = '🚨 전송 중...'; btn.disabled = true; btn.classList.add('sending'); }
+
+    // SOS 터치 즉각 확인 진동 — 사고 충격 상황에서도 버튼이 눌렸음을 체감으로 확인
+    if (navigator.vibrate) navigator.vibrate([200, 80, 200, 80, 600]);
+
+    try {
+      const address = await getAddress(pos.lat, pos.lng);
+      const mapUrl  = `https://www.google.com/maps?q=${pos.lat},${pos.lng}`;
+      const shareText = [
+        '[Safe Ride 위급 상황 구조 요청]',
+        '도움이 필요합니다! 현재 저의 실시간 위치 정보입니다.',
+        `- 현재 주소: ${address}`,
+        `- 상세 좌표: 위도 ${pos.lat.toFixed(5)}, 경도 ${pos.lng.toFixed(5)}`,
+        `- 지도 링크: ${mapUrl}`
+      ].join('\n');
+
+      // DB 저장 — 공유와 병렬 실행, 실패해도 공유는 계속 진행
+      API.logEmergency({ lat: pos.lat, lng: pos.lng, address }).catch(() => {});
+
+      if (navigator.share) {
+        await navigator.share({ title: '🚨 Safe Ride 위급 상황 구조 요청', text: shareText });
+        // navigator.share가 resolve = 사용자가 전송 대상 선택 완료
+        Toast.show('구조 요청 전송 완료! 위치 정보가 저장됐습니다.');
+      } else {
+        // 폴백: 클립보드 복사 (PC·Web Share 미지원 환경)
+        await navigator.clipboard.writeText(shareText).catch(() => {});
+        Toast.show('위치 정보가 클립보드에 복사됐습니다. 카카오톡·문자에 붙여넣기 후 전송하세요.');
+      }
+    } catch (e) {
+      // AbortError = 사용자가 공유 시트에서 취소 → 정상 흐름, 에러 토스트 생략
+      if (e?.name !== 'AbortError') {
+        Toast.show('전송 실패 — 직접 119(긴급)에 연락하세요.');
+      }
+    } finally {
+      if (btn) { btn.textContent = '🚨 SOS 구조 요청'; btn.disabled = false; btn.classList.remove('sending'); }
+    }
   }
 };
 
@@ -607,18 +744,23 @@ const GpsDebug = {
 // GPS 모듈 — iOS PWA 전용 폴백 + 강제 트리거 + 워치독 포함
 // ═══════════════════════════════════════════════════════════════════════════
 const GPS = {
-  watchId:        null,
-  lastPos:        null,
-  active:         false,
-  autoCenter:     true,
-  accuracyCircle: null,
-  speedBuffer:    [],
-  _gpsLocked:     false,
-  _hasPanned:     false,
-  _prevPos:       null,
-  _lastHeading:   null,
-  _retryCount:    0,       // 연속 재시도 횟수 (5회 초과 시 권한 안내로 전환)
-  _watchdogTimer: null,    // 응답 없음 감시 타이머
+  watchId:           null,
+  lastPos:           null,
+  active:            false,
+  autoCenter:        true,
+  accuracyCircle:    null,
+  speedBuffer:       [],
+  _gpsLocked:        false,
+  _hasPanned:        false,
+  _prevPos:          null,
+  _lastHeading:      null,
+  _retryCount:       0,       // 연속 재시도 횟수 (5회 초과 시 권한 안내로 전환)
+  _watchdogTimer:    null,    // 응답 없음 감시 타이머
+  // ── 헤딩 스무딩 (이동 평균 + LERP 애니메이션) ──
+  _headingBuffer:    [],      // 원형 이동 평균 버퍼 (최대 5개)
+  _targetBearing:    0,       // 목표 방향각 (이동 평균 결과)
+  _currentBearing:   0,       // 현재 표시 방향각 (LERP 중간값)
+  _bearingAnimFrame: null,    // requestAnimationFrame 핸들
 
   // ── iOS PWA 전용: 시스템에 "GPS 필수 앱" 신호를 먼저 쏘는 강제 트리거 ───────
   // 앱 마운트 직후 짧은 타임아웃으로 getCurrentPosition을 한 번 선제 호출.
@@ -742,6 +884,11 @@ const GPS = {
     this._hasPanned  = false;
     this._prevPos    = null;
     this._retryCount = 0;
+    // 베어링 애니메이션 정리
+    if (this._bearingAnimFrame) { cancelAnimationFrame(this._bearingAnimFrame); this._bearingAnimFrame = null; }
+    this._headingBuffer  = [];
+    this._currentBearing = 0;
+    this._targetBearing  = 0;
     this._setGpsUI('off');
     GpsDebug.update('off');
   },
@@ -787,9 +934,16 @@ const GPS = {
     // 항상 근접 감지 (라이딩 여부와 무관하게 경고 동작)
     checkProximity(lat, lng);
 
-    // 헤드업 지도 회전 (라이딩 중, 속도 > 2km/h일 때)
+    // 헤드업 지도 회전 — 이동 평균 필터 + LERP 애니메이션 (차량용 내비게이션 방식)
     if (Ride.active && rawKmh != null && rawKmh > 2 && this._lastHeading != null) {
-      if (map.setBearing) map.setBearing(this._lastHeading);
+      if (map.setBearing) {
+        // 이동 평균 버퍼에 추가 (최근 5개 GPS 헤딩으로 원형 평균 계산)
+        this._headingBuffer.push(this._lastHeading);
+        if (this._headingBuffer.length > 5) this._headingBuffer.shift();
+        // 원형 평균으로 목표 방향각 결정 → LERP 애니메이션 시작
+        this._targetBearing = circularMean(this._headingBuffer);
+        this._startBearingAnim();
+      }
     }
 
     if (!Ride.active) return;
@@ -813,6 +967,28 @@ const GPS = {
 
     // 라이딩 중 경로 기록
     if (Ride.routeCoords.length < 200) Ride.routeCoords.push([lat, lng]);
+  },
+
+  // ── 지도 베어링 LERP 애니메이션 (차량용 내비게이션 스타일 부드러운 회전) ────
+  // requestAnimationFrame 루프로 _currentBearing → _targetBearing 를 매 프레임 12% 보간
+  // 60fps 기준: 0.5초 이내에 목표 방향에 95% 수렴 — GPS 끊김 없이 물 흐르듯 회전
+  _startBearingAnim() {
+    if (this._bearingAnimFrame || !map.setBearing) return;
+    const step = () => {
+      // 최단 경로 회전: 180° 기준으로 시계/반시계 결정 (350°→10° 문제 해결)
+      const diff = ((this._targetBearing - this._currentBearing + 540) % 360) - 180;
+      if (Math.abs(diff) < 0.3) {
+        this._currentBearing = this._targetBearing;
+        map.setBearing(this._currentBearing);
+        this._bearingAnimFrame = null;
+        return;
+      }
+      // LERP factor 0.12: 빠른 응답 + 과도한 진동 억제 균형
+      this._currentBearing = (this._currentBearing + diff * 0.12 + 360) % 360;
+      map.setBearing(this._currentBearing);
+      this._bearingAnimFrame = requestAnimationFrame(step);
+    };
+    this._bearingAnimFrame = requestAnimationFrame(step);
   },
 
   _setGpsUI(state) {
@@ -891,7 +1067,9 @@ const Ride = {
     stopZonePolling();
     WakeLock.release();
 
-    // 지도 베어링 리셋 (북쪽 위)
+    // 지도 베어링 리셋 (북쪽 위) + LERP 애니메이션 취소
+    if (GPS._bearingAnimFrame) { cancelAnimationFrame(GPS._bearingAnimFrame); GPS._bearingAnimFrame = null; }
+    GPS._headingBuffer = []; GPS._currentBearing = 0; GPS._targetBearing = 0;
     if (map.setBearing) map.setBearing(0);
 
     const btn = document.getElementById('ride-btn');
@@ -911,10 +1089,12 @@ const Ride = {
           avgSpeed: avg, maxSpeed: this.maxSpeed,
           dangerZonesPassed: this.passedZones, route: this.routeCoords.slice(0, 200)
         });
-        // 주행 거리 포인트 (+5pt/10km)
+        // 주행 거리 포인트 (+5pt/10km) + total_distance 갱신
+        // distKm > 0 조건: 거리 누적은 포인트 여부와 무관하게 항상 업데이트
+        // 버그 수정: ptFromDist > 0 조건이면 10km 미만 라이딩은 total_distance가 전혀 갱신 안 됨
         const distKm = this.distance / 1000;
         const ptFromDist = Math.floor(distKm / 10) * 5;
-        if (ptFromDist > 0 && Auth.user) {
+        if (distKm > 0 && Auth.user) {
           API.addSafetyPoints(ptFromDist, 0, distKm).catch(() => {});
         }
         Toast.show(`라이딩 저장 완료! ${(this.distance/1000).toFixed(2)} km`);

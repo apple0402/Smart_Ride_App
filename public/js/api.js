@@ -1,35 +1,36 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// API — Supabase 클라이언트 기반 (Express JSON 파일 백엔드 대체)
+// Safe Ride — api.js  (Supabase 클라이언트 기반)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ── DB 컬럼(snake_case) → 앱 객체(camelCase) 변환 ──────────────────────────
 function mapZone(z) {
   return {
-    id:          z.id,
-    lat:         z.lat,
-    lng:         z.lng,
-    title:       z.title,
-    type:        z.type,
-    desc:        z.description || '',   // DB: description → 앱: desc
-    severity:    z.severity,
-    reportCount: z.report_count,
-    createdAt:   z.created_at
+    id:           z.id,
+    lat:          z.lat,
+    lng:          z.lng,
+    title:        z.title,
+    type:         z.type,
+    desc:         z.description || '',
+    severity:     z.severity,
+    reportCount:  z.report_count,
+    safeVotes:    z.safe_votes    || 0,
+    safeVoterIds: z.safe_voter_ids || [],
+    status:       z.status        || 'active',
+    createdAt:    z.created_at
   };
 }
 
 function mapRide(r) {
   return {
-    id:                 r.id,
-    distance:           r.distance,
-    duration:           r.duration,
-    avgSpeed:           r.avg_speed,
-    maxSpeed:           r.max_speed,
-    dangerZonesPassed:  r.danger_zones_passed || [],
-    createdAt:          r.created_at
+    id:                r.id,
+    distance:          r.distance,
+    duration:          r.duration,
+    avgSpeed:          r.avg_speed,
+    maxSpeed:          r.max_speed,
+    dangerZonesPassed: r.danger_zones_passed || [],
+    createdAt:         r.created_at
   };
 }
 
-// ── Haversine (100m 이내 중복 구역 체크용) ────────────────────────────────
 function _hav(lat1, lng1, lat2, lng2) {
   const R = 6371000;
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -38,19 +39,18 @@ function _hav(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-// ── 랜덤 ID 생성 ──────────────────────────────────────────────────────────
 function _uid(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 const API = {
 
-  // ══ 위험구역 ══════════════════════════════════════════════════════════════
-
+  // ══ 위험구역 (활성 상태만 조회) ════════════════════════════════════════════
   async getZones() {
     const { data, error } = await sb
       .from('zones')
       .select('*')
+      .eq('status', 'active')
       .order('created_at', { ascending: false });
     if (error) throw error;
     return data.map(mapZone);
@@ -62,20 +62,16 @@ const API = {
   },
 
   // ══ 위험 신고 ═════════════════════════════════════════════════════════════
-  // 1) reports 테이블에 저장
-  // 2) 100m 이내 기존 구역 → reportCount 증가
-  // 3) 없으면 zones 테이블에 신규 구역 생성
   async reportHazard({ lat, lng, type, desc, severity }) {
     const typeLabels = {
-      pothole:      'Pothole',
-      slippery:     'Slippery Road',
-      construction: 'Construction / Obstacle',
-      other:        'Hazard'
+      pothole:      '포트홀 / 크랙',
+      slippery:     '맨홀 / 미끄러움',
+      construction: '도로 / 보도 공사',
+      other:        '기타 위험'
     };
-    const title = typeLabels[type] || 'Hazard';
+    const title = typeLabels[type] || '기타 위험';
     const { data: { user } } = await sb.auth.getUser();
 
-    // 신고 저장
     await sb.from('reports').insert({
       id:          _uid('rpt'),
       user_id:     user?.id || null,
@@ -84,9 +80,8 @@ const API = {
       severity:    severity || 'medium'
     });
 
-    // 중복 구역 확인 (100m 이내)
-    const { data: zones } = await sb.from('zones').select('*');
-    const nearby = zones.find(z => _hav(z.lat, z.lng, lat, lng) < 100);
+    const { data: zones } = await sb.from('zones').select('*').eq('status', 'active');
+    const nearby = (zones || []).find(z => _hav(z.lat, z.lng, lat, lng) < 100);
 
     if (nearby) {
       const newCount = (nearby.report_count || 0) + 1;
@@ -99,15 +94,42 @@ const API = {
       lat, lng, title, type,
       description:  desc || '',
       severity:     severity || 'medium',
-      report_count: 1
+      report_count: 1,
+      safe_votes:   0,
+      safe_voter_ids: [],
+      status:       'active'
     }).select().single();
     if (error) throw error;
     return { action: 'created', zone: mapZone(newZone) };
   },
 
-  // ══ 위험구역 해제 ══════════════════════════════════════════════════════════
+  // ══ 안전 투표 (3인 자동 해제) ═════════════════════════════════════════════
+  async voteZoneSafe(zoneId) {
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) throw new Error('로그인이 필요합니다');
+
+    const { data: zone, error: zErr } = await sb.from('zones').select('*').eq('id', zoneId).single();
+    if (zErr) throw zErr;
+
+    const voterIds = zone.safe_voter_ids || [];
+    if (voterIds.includes(user.id)) throw new Error('이미 투표하셨습니다');
+
+    const newVotes    = (zone.safe_votes || 0) + 1;
+    const newVoterIds = [...voterIds, user.id];
+    const newStatus   = newVotes >= 3 ? 'cleared' : 'active';
+
+    const { data, error } = await sb.from('zones')
+      .update({ safe_votes: newVotes, safe_voter_ids: newVoterIds, status: newStatus })
+      .eq('id', zoneId)
+      .select()
+      .single();
+    if (error) throw error;
+    return { zone: mapZone(data), cleared: newStatus === 'cleared' };
+  },
+
+  // ══ 위험구역 해제 (관리자) ═════════════════════════════════════════════════
   async clearZone(zoneId) {
-    const { error } = await sb.from('zones').delete().eq('id', zoneId);
+    const { error } = await sb.from('zones').update({ status: 'cleared' }).eq('id', zoneId);
     if (error) throw error;
     return { success: true, id: zoneId };
   },
@@ -116,7 +138,6 @@ const API = {
   async saveRide({ distance, duration, avgSpeed, maxSpeed, dangerZonesPassed, route }) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) throw new Error('로그인 후 라이딩을 저장할 수 있습니다');
-
     const { data, error } = await sb.from('rides').insert({
       id:                  _uid('ride'),
       user_id:             user.id,
@@ -142,44 +163,76 @@ const API = {
     return data.map(mapRide);
   },
 
-  // ══ 인증 (Supabase Auth) ═══════════════════════════════════════════════════
+  // ══ 사용자 프로필 ══════════════════════════════════════════════════════════
+  async getProfile() {
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) return null;
+    const { data, error } = await sb.from('profiles').select('*').eq('id', user.id).single();
+    if (error && error.code === 'PGRST116') {
+      const { data: np } = await sb.from('profiles').insert({
+        id: user.id,
+        name: user.user_metadata?.name || user.email.split('@')[0],
+        safety_points: 0, total_reports: 0, total_distance: 0
+      }).select().single();
+      return np || null;
+    }
+    return data || null;
+  },
+
+  async addSafetyPoints(points, reportsDelta = 0, distanceDelta = 0) {
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) return;
+    const { data: existing } = await sb.from('profiles').select('*').eq('id', user.id).single();
+    if (existing) {
+      await sb.from('profiles').update({
+        safety_points:  (existing.safety_points  || 0) + points,
+        total_reports:  (existing.total_reports  || 0) + reportsDelta,
+        total_distance: (existing.total_distance || 0) + distanceDelta,
+        updated_at:     new Date().toISOString()
+      }).eq('id', user.id);
+    } else {
+      await sb.from('profiles').insert({
+        id: user.id,
+        name: user.user_metadata?.name || user.email.split('@')[0],
+        safety_points: points, total_reports: reportsDelta, total_distance: distanceDelta
+      });
+    }
+  },
+
+  // ══ 인증 ═══════════════════════════════════════════════════════════════════
   async signup(email, password, name) {
     const { data, error } = await sb.auth.signUp({
       email, password,
       options: { data: { name } }
     });
     if (error) return { error: error.message };
-    return {
-      id:    data.user?.id,
-      email: data.user?.email,
-      name,
-      token: data.session?.access_token
-    };
+    return { id: data.user?.id, email: data.user?.email, name, token: data.session?.access_token };
   },
 
   async login(email, password) {
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
     if (error) return { error: error.message };
     const name = data.user.user_metadata?.name || email.split('@')[0];
-    return {
-      id:    data.user.id,
-      email: data.user.email,
-      name,
-      token: data.session.access_token
-    };
+    return { id: data.user.id, email: data.user.email, name, token: data.session.access_token };
   },
 
-  async logout() {
-    await sb.auth.signOut();
-  },
+  async logout() { await sb.auth.signOut(); },
 
   async getMe() {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return {};
-    return {
-      id:    user.id,
-      email: user.email,
-      name:  user.user_metadata?.name || user.email.split('@')[0]
-    };
+    return { id: user.id, email: user.email, name: user.user_metadata?.name || user.email.split('@')[0] };
+  },
+
+  // ══ SOS 긴급 로그 저장 (관제 연동용) ════════════════════════════════════════
+  async logEmergency({ lat, lng, address }) {
+    const { data: { user } } = await sb.auth.getUser();
+    const { error } = await sb.from('emergency_logs').insert({
+      user_id:   user?.id || null,
+      latitude:  lat,
+      longitude: lng,
+      address:   address || ''
+    });
+    if (error) throw error;
   }
 };
