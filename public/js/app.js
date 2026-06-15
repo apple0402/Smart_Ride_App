@@ -364,16 +364,15 @@ const SilentAudioLoop = {
   },
 
   _startKeepAlive() {
-    // iOS WebKit 전용: 화면 꺼짐 후 AudioContext가 suspended 로 떨어지는 현상 방어
-    // Android Chrome은 Web Audio API가 백그라운드에서도 안정적으로 동작 → 인터벌 불필요
-    if (!Platform.isIOS) return;
+    // iOS·Android 공통: 백그라운드에서 AudioContext 가 suspended 로 떨어지는 현상 방어
     clearInterval(this._keepAlive);
     this._keepAlive = setInterval(() => {
       if (!this._ctx) return;
       if (this._ctx.state === 'suspended') {
         this._ctx.resume().catch(() => {});
-        this._suppressMediaSession();
       }
+      // playback 모드(라이딩 중)에서는 미디어 세션 억제 안함 — JS 실행 유지에 필수
+      if (this._mode !== 'playback') this._suppressMediaSession();
     }, 5000);
   },
 
@@ -384,14 +383,34 @@ const SilentAudioLoop = {
 
   resume() {
     if (this._ctx?.state === 'suspended') this._ctx.resume().catch(() => {});
-    this._suppressMediaSession();
+    if (this._mode !== 'playback') this._suppressMediaSession();
     this._applyAudioSession(this._mode);
   },
 
-  // 경고음·TTS 재생 시 'transient'(배경 음악 덕킹), 경고 종료 후 'ambient'(복귀)
+  // playback: 라이딩 중 — 화면 잠금 후에도 JS·GPS·오디오 유지, 잠금화면 미디어 위젯 표시
+  // ambient:  라이딩 외 — 타 앱 음악 공존, 미디어 위젯 없음
+  // transient: 경고음 재생 시 — 배경 음악 덕킹 (일시적)
   setMode(mode) {
     this._mode = mode;
     this._applyAudioSession(mode);
+    if (mode === 'playback') {
+      this._setRidingMediaSession();
+    } else if (mode === 'ambient') {
+      this._suppressMediaSession();
+    }
+  },
+
+  // 라이딩 중 잠금화면 미디어 위젯에 앱 정보 표시 (playback 모드 필수 요건)
+  _setRidingMediaSession() {
+    if (!('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: 'Safe Ride',
+        artist: '🚴 라이딩 중 — 위험 구역 감지 활성',
+        artwork: [{ src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' }]
+      });
+      navigator.mediaSession.playbackState = 'playing';
+    } catch(e) {}
   },
 
   _applyAudioSession(type) {
@@ -514,6 +533,11 @@ async function loadZones() {
     updateNearbyCount();
     ZoneList.render();
     if (newZones.length) Toast.show(`새 위험 구역 ${newZones.length}개가 지도에 추가됐습니다`);
+    // SW 백그라운드 감지용: 구역 데이터를 Service Worker에 전달
+    sendSwMessage({
+      type:  'ZONES_DATA',
+      zones: allZones.map(z => ({ id: z.id, lat: z.lat, lng: z.lng, type: z.type, title: z.title }))
+    });
   } catch (e) {
     document.getElementById('danger-count-text').textContent = '구역 불러오기 실패';
   }
@@ -897,6 +921,10 @@ const GPS = {
     const { latitude: lat, longitude: lng, speed, accuracy, heading } = pos.coords;
     const kmh = speed != null ? Math.round(speed * 3.6) : null;
     this._lastHeading = (heading != null && !isNaN(heading)) ? heading : this._lastHeading;
+    // 화면 잠금 상태에서는 SW에도 좌표 전달 — SW 백그라운드 구역 감지 이중 보장
+    if (document.hidden) {
+      sendSwMessage({ type: 'GPS_POSITION', lat, lng });
+    }
     this._applyPosition(lat, lng, kmh, accuracy);
   },
 
@@ -1046,9 +1074,10 @@ const Ride = {
     startZonePolling();
     WakeLock.request();
 
-    // 라이딩 시작 = 사용자 제스처 → iOS 오디오 세션 즉시 언락
-    // 이 시점부터 화면이 꺼져도 오디오 세션이 유지되어 GPS·스크립트 동작 보장
+    // 라이딩 시작 = 사용자 제스처 → iOS 오디오 세션 언락 후 playback 모드 전환
+    // playback: 화면 잠금 후에도 JS·GPS·오디오 세션 유지 (ambient는 잠금 시 즉시 중단됨)
     SilentAudioLoop.unlock();
+    setTimeout(() => SilentAudioLoop.setMode('playback'), 300);
 
     // TTS 음성 파일 프리페치 + 디코딩 (라이딩 중 화면 꺼짐에도 즉시 재생 가능)
     setTimeout(() => VoiceAlert.prefetch(), 300);
@@ -1066,6 +1095,7 @@ const Ride = {
     clearInterval(this.timer);
     stopZonePolling();
     WakeLock.release();
+    SilentAudioLoop.setMode('ambient'); // 라이딩 종료 → ambient 복귀 (미디어 위젯 제거)
 
     // 지도 베어링 리셋 (북쪽 위) + LERP 애니메이션 취소
     if (GPS._bearingAnimFrame) { cancelAnimationFrame(GPS._bearingAnimFrame); GPS._bearingAnimFrame = null; }
@@ -1206,8 +1236,8 @@ const Alert = {
     setTimeout(() => { banner.classList.remove('show', 'fade-out'); }, 400);
     currentAlertZone = null;
 
-    // 배경 음악 덕킹 해제: transient → ambient (타 앱 음악 볼륨 원래대로 자동 복구)
-    SilentAudioLoop.setMode('ambient');
+    // 경고 종료: 라이딩 중이면 playback(백그라운드 유지) 복귀, 아니면 ambient
+    SilentAudioLoop.setMode(Ride.active ? 'playback' : 'ambient');
   }
 };
 
