@@ -1,9 +1,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Safe Ride — Service Worker v16
-// v16: SW 백그라운드 GPS 구역 감지 추가 | playback 모드 보조 이중 알림
+// Safe Ride — Service Worker v17
+// v17: playback 모드 완전 제거 | 미디어 위젯 박멸 | transient 덕킹만 사용
 // ═══════════════════════════════════════════════════════════════════════════
 
-const CACHE_NAME = 'safe-ride-v16';
+const CACHE_NAME = 'safe-ride-v17';
 const PRECACHE   = ['/icons/icon-192.png', '/icons/icon-512.png', '/assets/silent.wav'];
 
 self.addEventListener('install', e => {

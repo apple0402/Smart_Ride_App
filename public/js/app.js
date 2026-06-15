@@ -371,8 +371,7 @@ const SilentAudioLoop = {
       if (this._ctx.state === 'suspended') {
         this._ctx.resume().catch(() => {});
       }
-      // playback 모드(라이딩 중)에서는 미디어 세션 억제 안함 — JS 실행 유지에 필수
-      if (this._mode !== 'playback') this._suppressMediaSession();
+      this._suppressMediaSession(); // 항상 미디어 위젯 억제 유지
     }, 5000);
   },
 
@@ -383,34 +382,16 @@ const SilentAudioLoop = {
 
   resume() {
     if (this._ctx?.state === 'suspended') this._ctx.resume().catch(() => {});
-    if (this._mode !== 'playback') this._suppressMediaSession();
+    this._suppressMediaSession(); // 항상 미디어 위젯 억제
     this._applyAudioSession(this._mode);
   },
 
-  // playback: 라이딩 중 — 화면 잠금 후에도 JS·GPS·오디오 유지, 잠금화면 미디어 위젯 표시
-  // ambient:  라이딩 외 — 타 앱 음악 공존, 미디어 위젯 없음
-  // transient: 경고음 재생 시 — 배경 음악 덕킹 (일시적)
+  // ambient:   기본 — 타 앱 음악 공존, 미디어 위젯 없음
+  // transient: 경고음 재생 시 — 배경 음악 덕킹 후 자동 복귀 (미디어 위젯 없음)
   setMode(mode) {
     this._mode = mode;
     this._applyAudioSession(mode);
-    if (mode === 'playback') {
-      this._setRidingMediaSession();
-    } else if (mode === 'ambient') {
-      this._suppressMediaSession();
-    }
-  },
-
-  // 라이딩 중 잠금화면 미디어 위젯에 앱 정보 표시 (playback 모드 필수 요건)
-  _setRidingMediaSession() {
-    if (!('mediaSession' in navigator)) return;
-    try {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: 'Safe Ride',
-        artist: '🚴 라이딩 중 — 위험 구역 감지 활성',
-        artwork: [{ src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' }]
-      });
-      navigator.mediaSession.playbackState = 'playing';
-    } catch(e) {}
+    this._suppressMediaSession(); // 모드 변경 시 항상 위젯 억제
   },
 
   _applyAudioSession(type) {
@@ -1074,10 +1055,8 @@ const Ride = {
     startZonePolling();
     WakeLock.request();
 
-    // 라이딩 시작 = 사용자 제스처 → iOS 오디오 세션 언락 후 playback 모드 전환
-    // playback: 화면 잠금 후에도 JS·GPS·오디오 세션 유지 (ambient는 잠금 시 즉시 중단됨)
+    // 라이딩 시작 = 사용자 제스처 → AudioContext 언락 (ambient 모드 유지, 미디어 위젯 없음)
     SilentAudioLoop.unlock();
-    setTimeout(() => SilentAudioLoop.setMode('playback'), 300);
 
     // TTS 음성 파일 프리페치 + 디코딩 (라이딩 중 화면 꺼짐에도 즉시 재생 가능)
     setTimeout(() => VoiceAlert.prefetch(), 300);
@@ -1236,8 +1215,8 @@ const Alert = {
     setTimeout(() => { banner.classList.remove('show', 'fade-out'); }, 400);
     currentAlertZone = null;
 
-    // 경고 종료: 라이딩 중이면 playback(백그라운드 유지) 복귀, 아니면 ambient
-    SilentAudioLoop.setMode(Ride.active ? 'playback' : 'ambient');
+    // 경고 종료: transient → ambient 복귀 (배경 음악 원래 볼륨 자동 복구)
+    SilentAudioLoop.setMode('ambient');
   }
 };
 
