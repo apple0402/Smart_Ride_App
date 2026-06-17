@@ -106,54 +106,16 @@ function formatDate(isoStr) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// VoiceAlert — AudioContext 기반 TTS 음성 안내
-//
-// [iOS 잠금화면 speechSynthesis 완전 차단 문제 해결]
-// 기존: window.speechSynthesis → iOS 화면 잠금 시 강제 정지
-// 변경: /api/tts 서버 프록시로 MP3 프리페치 → AudioBuffer 디코딩 →
-//       SilentAudioLoop의 AudioContext에서 직접 재생
-//       ∴ 화면이 꺼져도 오디오 세션이 살아있으면 100% 재생 보장
-//
-// 재생 우선순위:
-//   1순위: 디코딩된 AudioBuffer → AudioContext.createBufferSource (화면 꺼짐 OK)
-//   2순위: raw ArrayBuffer 온디맨드 디코딩 (프리페치 실패 시)
-//   3순위: window.speechSynthesis (화면 켜짐 + Android 폴백)
+// NativeTTS — @capacitor-community/text-to-speech 브릿지
+// iOS: AVSpeechSynthesizer → 잠금화면·백그라운드에서도 네이티브 음성 안내 동작
+// 폴백: Capacitor 없는 환경(웹 브라우저)에서는 speechSynthesis 사용
 // ═══════════════════════════════════════════════════════════════════════════
-const VoiceAlert = {
-  // 위험 유형별 TTS 문구 (ZONE_TTS와 통합)
+const NativeTTS = {
   MESSAGES: {
     pothole:      '도로 파손, 단차 충격 주의!!',
     slippery:     '맨홀 미끄럼 주의!!',
     construction: '공사 중!! 서행 하세요!!',
     other:        '위험 구역 주의하세요'
-  },
-  _raw:     {},   // type → ArrayBuffer (미디코딩 원본)
-  _decoded: {},   // type → AudioBuffer (재생 준비 완료)
-  _CACHE_VER: 'v1', // 메시지 변경 시 캐시 무효화를 위한 버전 키
-
-  // localStorage → ArrayBuffer (크로스 세션 TTS 캐시 복원)
-  _loadCache(type) {
-    try {
-      const b64 = localStorage.getItem(`tts_${this._CACHE_VER}_${type}`);
-      if (!b64) return null;
-      const binary = atob(b64);
-      const buf = new ArrayBuffer(binary.length);
-      const view = new Uint8Array(buf);
-      for (let i = 0; i < binary.length; i++) view[i] = binary.charCodeAt(i);
-      return buf;
-    } catch { return null; }
-  },
-
-  // ArrayBuffer → localStorage base64 (청크 단위 처리로 스택오버플로 방지)
-  _saveCache(type, buf) {
-    try {
-      const bytes = new Uint8Array(buf);
-      let b64 = '';
-      const chunk = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunk)
-        b64 += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-      localStorage.setItem(`tts_${this._CACHE_VER}_${type}`, btoa(b64));
-    } catch {}
   },
 
   getZoneMessage(zone) {
@@ -161,126 +123,34 @@ const VoiceAlert = {
     return this.MESSAGES[zone.type] || `${ZONE_KOREAN[zone.type] || zone.title} 주의하세요`;
   },
 
-  // 앱 시작 즉시 호출: AudioContext 없이도 raw MP3 데이터 프리페치
-  // 1순위: localStorage 캐시 (이전 세션 성공분 즉시 재사용)
-  // 2순위: /api/tts 서버 프록시 — 3회 재시도 + 캐시 저장
-  async prefetch() {
-    await Promise.allSettled(
-      Object.entries(this.MESSAGES).map(async ([type, text]) => {
-        if (this._raw[type]) return;
-        // localStorage 캐시 히트 → 네트워크 요청 없이 즉시 복원
-        const cached = this._loadCache(type);
-        if (cached) { this._raw[type] = cached; return; }
-        // 서버 TTS 프록시 — 3회 재시도 (Google Translate TTS 간헐적 실패 대응)
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            const res = await fetch(`/api/tts?text=${encodeURIComponent(text)}`);
-            if (res.ok) {
-              const buf = await res.arrayBuffer();
-              this._raw[type] = buf;
-              this._saveCache(type, buf.slice(0)); // 다음 세션을 위해 localStorage 저장
-              break;
-            }
-          } catch {}
-          if (attempt < 2) await new Promise(r => setTimeout(r, (attempt + 1) * 800));
-        }
-      })
-    );
-    // 프리페치 완료 후 AudioContext가 이미 있으면 바로 디코딩
-    this.decodeAll().catch(() => {});
-  },
-
-  // SilentAudioLoop.unlock() 후 호출: raw → AudioBuffer 디코딩
-  async decodeAll() {
-    const ctx = SilentAudioLoop.getContext();
-    if (!ctx || ctx.state === 'closed') return;
-    await Promise.allSettled(
-      Object.entries(this._raw).map(async ([type, raw]) => {
-        if (this._decoded[type]) return;
-        try {
-          // slice(0): decodeAudioData가 ArrayBuffer를 소비하므로 복사본 사용
-          this._decoded[type] = await ctx.decodeAudioData(raw.slice(0));
-        } catch {}
-      })
-    );
-  },
-
-  // 위험 감지 시 호출 — startDelay: 비프음 완료 후 음성 시작 (초)
-  async play(zoneType, text, startDelay = 0) {
+  async speak(text, startDelay = 0) {
     if (!Settings.get().ttsEnabled) return;
-
-    let ctx = SilentAudioLoop.getContext();
-    if (!ctx || ctx.state === 'closed') {
-      // AudioContext 없음 → speechSynthesis 폴백 (화면 켜짐 상태에서만)
-      this._speechFallback(text);
-      return;
-    }
-    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
-
-    // 1순위: 디코딩된 AudioBuffer 재생 (화면 꺼짐 포함 100% 동작)
-    let buffer = this._decoded[zoneType];
-
-    // 2순위: raw 데이터가 있으면 온디맨드 디코딩
-    if (!buffer && this._raw[zoneType]) {
-      try {
-        buffer = await ctx.decodeAudioData(this._raw[zoneType].slice(0));
-        this._decoded[zoneType] = buffer;
-      } catch {}
-    }
-
-    // 3순위: 프리페치 실패 + 화면 켜짐 상태일 때 즉시 온디맨드 페치 시도 (최대 2초)
-    // 화면 잠금 상태(document.hidden)에서는 네트워크 요청이 블록될 수 있으므로 건너뜀
-    if (!buffer && !document.hidden) {
-      try {
-        const ttsText = this.MESSAGES[zoneType] || text;
-        const res = await Promise.race([
-          fetch(`/api/tts?text=${encodeURIComponent(ttsText)}`),
-          new Promise((_, rej) => setTimeout(() => rej(), 2000))
-        ]);
-        if (res.ok) {
-          const raw = await res.arrayBuffer();
-          this._raw[zoneType] = raw;
-          this._saveCache(zoneType, raw.slice(0));
-          buffer = await ctx.decodeAudioData(raw.slice(0));
-          this._decoded[zoneType] = buffer;
-        }
-      } catch {}
-    }
-
-    if (buffer) {
-      const src  = ctx.createBufferSource();
-      const gain = ctx.createGain();
-      src.buffer = buffer;
-      src.connect(gain);
-      gain.connect(ctx.destination);
-      gain.gain.value = 1.5; // 비프음보다 음성이 선명하게
-      src.start(ctx.currentTime + 0.05 + startDelay);
-      return;
-    }
-
-    // 3순위: TTS 버퍼 없음 → speechSynthesis 폴백
-    this._speechFallback(text);
-  },
-
-  _speechFallback(text) {
-    // iOS 잠금 시 speechSynthesis 차단 → 화면 켜짐 상태·Android에서만 실행
-    if (document.hidden && Platform.isIOS) return;
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    setTimeout(() => {
+    const doSpeak = async () => {
+      if (window.CapBridge?.TextToSpeech) {
+        try {
+          await window.CapBridge.TextToSpeech.speak({ text, lang: 'ko-KR', rate: 0.9, volume: 1.0 });
+          return;
+        } catch (e) {}
+      }
+      // 웹 폴백 — 잠금화면에서는 iOS가 차단하므로 화면 켜짐 상태에서만 실행
+      if (document.hidden && Platform.isIOS) return;
+      if (!window.speechSynthesis) return;
+      window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'ko-KR'; u.rate = 0.9; u.volume = 1.0;
       const kor = window.speechSynthesis.getVoices().find(v => v.lang.startsWith('ko'));
       if (kor) u.voice = kor;
       window.speechSynthesis.speak(u);
-    }, 150);
+    };
+    if (startDelay > 0) setTimeout(doSpeak, startDelay * 1000);
+    else await doSpeak();
   }
 };
 
-// 하위 호환 TTS 래퍼 (기존 호출부 변경 최소화)
+// 하위 호환 래퍼
 const TTS = {
-  speak(text)       { VoiceAlert._speechFallback(text); },
-  getZoneMessage(z) { return VoiceAlert.getZoneMessage(z); }
+  speak(text)       { NativeTTS.speak(text); },
+  getZoneMessage(z) { return NativeTTS.getZoneMessage(z); }
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -303,171 +173,36 @@ const WakeLock = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// iOS Silent Audio Loop — Web Audio API 전용 (HTML5 Audio 완전 제거)
-//
-// [변경 이유]
-//  HTML5 <audio> 태그로 WAV 재생 시 iOS가 앱을 '음악 앱'으로 인식:
-//    - 잠금화면·알림창에 미디어 플레이어 위젯(재생/일시정지 버튼) 표시
-//    - 다이나믹 아일랜드·상태바에 오디오 재생 중 아이콘 상주
-//    - 타 음악 앱(멜론, 유튜브 뮤직 등)의 오디오 세션 강제 중단
-//
-// [대체 구현]
-//  - Web Audio API 극소음(-100dB) 노이즈 루프: 오디오 세션 살아있는 동안 iOS JS·GPS 유지
-//  - navigator.audioSession.type = 'ambient' (iOS 16.4+): 타 앱 음악과 공존(믹싱)
-//  - navigator.mediaSession 메타데이터 null 강제 설정: 잠금화면 위젯 억제
-//  - setMode('transient'): 위험 경고 시 배경 음악 덕킹, 경고 후 'ambient' 복귀
+// NativeAudio — @capacitor-community/native-audio 브릿지
+// iOS: AVAudioPlayer → 잠금화면·백그라운드에서도 네이티브 경고음 재생
+// public/sounds/beep_*.wav 파일을 앱 시작 시 미리 로드 (preload)
 // ═══════════════════════════════════════════════════════════════════════════
-const SilentAudioLoop = {
-  _ctx:       null,
-  _src:       null,
-  _unlocked:  false,
-  _mode:      'ambient',
-  _keepAlive: null,
+const NativeAudio = {
+  _TYPES: ['pothole', 'slippery', 'construction', 'other'],
+  _loaded: false,
 
-  async unlock() {
-    if (this._unlocked) { this.resume(); return; }
-
-    // 잠금화면 미디어 플레이어 위젯 전면 억제
-    this._suppressMediaSession();
-
-    // iOS 오디오 세션: ambient = 타 앱 음악과 공존, 방해 없음
-    this._applyAudioSession('ambient');
-
-    // Web Audio API 극소음 루프 — 오디오 세션 활성 상태 유지 (백그라운드 GPS·JS 동작 보장)
-    try {
-      this._ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const sr  = this._ctx.sampleRate;
-      const len = sr * 3; // 3초 버퍼 반복
-      const buf = this._ctx.createBuffer(1, len, sr);
-      const d   = buf.getChannelData(0);
-      // -100dB 극소음 (완전 무음 0 이면 iOS가 세션 비활성으로 판단)
-      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * 0.00001;
-
-      const gain = this._ctx.createGain();
-      gain.gain.value = 1;
-      gain.connect(this._ctx.destination);
-
-      this._src        = this._ctx.createBufferSource();
-      this._src.buffer = buf;
-      this._src.loop   = true;
-      this._src.connect(gain);
-
-      if (this._ctx.state === 'suspended') await this._ctx.resume();
-      this._src.start(0);
-    } catch(e) {}
-
-    this._unlocked = true;
-    // 5초마다 ctx 상태 점검 — 백그라운드에서 suspended 로 떨어지면 즉시 재개
-    this._startKeepAlive();
-    // AudioContext 준비 완료 → 프리페치된 TTS raw 버퍼를 AudioBuffer로 디코딩
-    setTimeout(() => VoiceAlert.decodeAll().catch(() => {}), 200);
+  async preload() {
+    if (!window.CapBridge?.NativeAudio) return;
+    await Promise.allSettled(this._TYPES.map(type =>
+      window.CapBridge.NativeAudio.preload({
+        assetId:        `beep_${type}`,
+        assetPath:      `sounds/beep_${type}.wav`,
+        audioChannelNum: 1,
+        isUrl:           false,
+        volume:          1.0,
+      })
+    ));
+    this._loaded = true;
   },
 
-  _startKeepAlive() {
-    // iOS·Android 공통: 백그라운드에서 AudioContext 가 suspended 로 떨어지는 현상 방어
-    clearInterval(this._keepAlive);
-    this._keepAlive = setInterval(() => {
-      if (!this._ctx) return;
-      if (this._ctx.state === 'suspended') {
-        this._ctx.resume().catch(() => {});
-      }
-      this._suppressMediaSession(); // 항상 미디어 위젯 억제 유지
-    }, 5000);
-  },
-
-  stopKeepAlive() {
-    clearInterval(this._keepAlive);
-    this._keepAlive = null;
-  },
-
-  resume() {
-    if (this._ctx?.state === 'suspended') this._ctx.resume().catch(() => {});
-    this._suppressMediaSession(); // 항상 미디어 위젯 억제
-    this._applyAudioSession(this._mode);
-  },
-
-  // ambient:   기본 — 타 앱 음악 공존, 미디어 위젯 없음
-  // transient: 경고음 재생 시 — 배경 음악 덕킹 후 자동 복귀 (미디어 위젯 없음)
-  setMode(mode) {
-    this._mode = mode;
-    this._applyAudioSession(mode);
-    this._suppressMediaSession(); // 모드 변경 시 항상 위젯 억제
-  },
-
-  _applyAudioSession(type) {
-    if (navigator.audioSession) {
-      try { navigator.audioSession.type = type; } catch(e) {}
-    }
-  },
-
-  _suppressMediaSession() {
-    if (!('mediaSession' in navigator)) return;
-    navigator.mediaSession.metadata     = null;
-    navigator.mediaSession.playbackState = 'none';
-    ['play','pause','stop','seekbackward','seekforward','previoustrack','nexttrack'].forEach(a => {
-      try { navigator.mediaSession.setActionHandler(a, null); } catch(e) {}
-    });
-  },
-
-  getContext() { return this._ctx; }
-};
-
-// ═══════════════════════════════════════════════════════════════════════════
-// HazardAudio — 위험 유형별 구별 가능한 경고음 합성
-// Web Audio API 로 직접 합성 → 오디오 세션 활성 상태에서 화면 꺼짐에도 100% 동작
-// 오디오 세션 모드 전환(덕킹)은 Alert.show / Alert.dismiss 에서 일괄 관리
-// ═══════════════════════════════════════════════════════════════════════════
-const HazardAudio = {
-  // [주파수Hz, 지속ms] — 0Hz는 무음 간격
-  PATTERNS: {
-    pothole:      [[880,180],[0,80],[880,180],[0,80],[1174,380]], // 위험!위험!경보!
-    slippery:     [[660,280],[0,120],[440,460]],                  // 미끄-러움↘
-    construction: [[550,130],[0,60],[550,130],[0,60],[550,130]], // 공사중·공사중
-    other:        [[770,220],[0,100],[770,440]],                  // 일반 경고
-  },
-
-  play(zoneType) {
-    let ctx = SilentAudioLoop.getContext();
-    if (!ctx || ctx.state === 'closed') {
-      try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) { return; }
-    }
-    // Android Chrome 포그라운드 복귀 시 ctx 가 suspended 상태일 수 있음 → 먼저 resume
-    if (ctx.state === 'suspended') {
-      ctx.resume()
-        .then(() => { SilentAudioLoop.resume(); this._schedule(ctx, zoneType); })
-        .catch(() => {});
-      return;
-    }
-    SilentAudioLoop.resume();
-    this._schedule(ctx, zoneType);
-  },
-
-  _schedule(ctx, zoneType) {
-    const pattern = this.PATTERNS[zoneType] || this.PATTERNS.other;
-    let t = ctx.currentTime + 0.04;
-
-    pattern.forEach(([freq, durMs]) => {
-      const dur = durMs / 1000;
-      if (freq === 0) { t += dur; return; }
-      const osc  = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(0.5, t + 0.025);
-      gain.gain.setValueAtTime(0.5, t + dur - 0.025);
-      gain.gain.linearRampToValueAtTime(0, t + dur);
-      osc.start(t);
-      osc.stop(t + dur);
-      t += dur;
-    });
+  async play(zoneType) {
+    if (!window.CapBridge?.NativeAudio) return;
+    const id = `beep_${this._TYPES.includes(zoneType) ? zoneType : 'other'}`;
+    try { await window.CapBridge.NativeAudio.play({ assetId: id }); } catch (e) {}
   }
 };
 
-// 하위 호환 래퍼 (기존 playAlertSound 호출 코드가 있을 경우를 위해 유지)
-function playAlertSound() { HazardAudio.play('other'); }
+function playAlertSound() { NativeAudio.play('other'); }
 
 // ── Service Worker 메시지 공통 발행 헬퍼 ────────────────────────────────────
 // [iOS 잠금화면 알림 누락 버그 수정 v2]
@@ -519,6 +254,14 @@ async function loadZones() {
       type:  'ZONES_DATA',
       zones: allZones.map(z => ({ id: z.id, lat: z.lat, lng: z.lng, type: z.type, title: z.title }))
     });
+    // 네이티브 백그라운드 추적에 최신 구역 데이터 동기화 (화면 잠금 대응)
+    if (Platform.isIOS && window.CapBridge?.BackgroundSafety && Ride.active) {
+      const alertDist = Settings.get().alertDistance;
+      window.CapBridge.BackgroundSafety.setZones({
+        zones:    allZones.map(z => ({ id: z.id, lat: z.lat, lng: z.lng, type: z.type, alertDist })),
+        alertDist
+      }).catch(() => {});
+    }
   } catch (e) {
     document.getElementById('danger-count-text').textContent = '구역 불러오기 실패';
   }
@@ -587,6 +330,19 @@ function haversine(lat1, lng1, lat2, lng2) {
   const dLng = (lng2-lng1)*Math.PI/180;
   const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
   return R*2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// ── GPS 좌표 차이로 진행 방향(베어링) 계산 ────────────────────────────────────
+// 나침반/deviceorientation 의존 없이 이전·현재 GPS 좌표 사이의 방위각을 계산.
+// 자전거 진동으로 인한 나침반 오차를 원천 차단 — 최소 1m 이동 시에만 갱신.
+function gpsCoordBearing(lat1, lng1, lat2, lng2) {
+  const toRad = d => d * Math.PI / 180;
+  const dLng  = toRad(lng2 - lng1);
+  const φ1    = toRad(lat1);
+  const φ2    = toRad(lat2);
+  const x     = Math.sin(dLng) * Math.cos(φ2);
+  const y     = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(dLng);
+  return (Math.atan2(x, y) * 180 / Math.PI + 360) % 360;
 }
 
 // ── 원형 평균(Circular Mean) — 헤딩 이동 평균 필터용 ─────────────────────────
@@ -901,7 +657,19 @@ const GPS = {
   onPosition(pos) {
     const { latitude: lat, longitude: lng, speed, accuracy, heading } = pos.coords;
     const kmh = speed != null ? Math.round(speed * 3.6) : null;
-    this._lastHeading = (heading != null && !isNaN(heading)) ? heading : this._lastHeading;
+
+    // GPS 좌표 차이 베어링을 우선 사용 (나침반 의존 제거 — 자전거 진동 오차 방지).
+    // 직전 좌표가 있고 실제 이동(≥1m)이 발생했을 때만 갱신.
+    if (this._prevPos) {
+      const moved = haversine(this._prevPos.lat, this._prevPos.lng, lat, lng);
+      if (moved >= 1) {
+        this._lastHeading = gpsCoordBearing(this._prevPos.lat, this._prevPos.lng, lat, lng);
+      }
+    } else if (heading != null && !isNaN(heading)) {
+      // 첫 수신 시에는 기기 heading을 초기값으로 사용
+      this._lastHeading = heading;
+    }
+
     // 화면 잠금 상태에서는 SW에도 좌표 전달 — SW 백그라운드 구역 감지 이중 보장
     if (document.hidden) {
       sendSwMessage({ type: 'GPS_POSITION', lat, lng });
@@ -943,13 +711,13 @@ const GPS = {
     // 항상 근접 감지 (라이딩 여부와 무관하게 경고 동작)
     checkProximity(lat, lng);
 
-    // 헤드업 지도 회전 — 이동 평균 필터 + LERP 애니메이션 (차량용 내비게이션 방식)
-    if (Ride.active && rawKmh != null && rawKmh > 2 && this._lastHeading != null) {
+    // 헤드업 지도 회전 — GPS 좌표 베어링 + 이동 평균 필터 + LERP 애니메이션
+    // rawKmh > 2 조건 제거: GPS 좌표 차이 베어링은 ≥1m 이동 시에만 onPosition에서 이미 갱신됨
+    if (Ride.active && this._lastHeading != null) {
       if (map.setBearing) {
-        // 이동 평균 버퍼에 추가 (최근 5개 GPS 헤딩으로 원형 평균 계산)
+        // 이동 평균 버퍼에 추가 (최근 5개로 원형 평균 — GPS 튐 완화)
         this._headingBuffer.push(this._lastHeading);
         if (this._headingBuffer.length > 5) this._headingBuffer.shift();
-        // 원형 평균으로 목표 방향각 결정 → LERP 애니메이션 시작
         this._targetBearing = circularMean(this._headingBuffer);
         this._startBearingAnim();
       }
@@ -1055,11 +823,24 @@ const Ride = {
     startZonePolling();
     WakeLock.request();
 
-    // 라이딩 시작 = 사용자 제스처 → AudioContext 언락 (ambient 모드 유지, 미디어 위젯 없음)
-    SilentAudioLoop.unlock();
+    // 네이티브 경고음 WAV 프리로드 (첫 경고 시 지연 없이 즉시 재생)
+    NativeAudio.preload().catch(() => {});
 
-    // TTS 음성 파일 프리페치 + 디코딩 (라이딩 중 화면 꺼짐에도 즉시 재생 가능)
-    setTimeout(() => VoiceAlert.prefetch(), 300);
+    // 네이티브 백그라운드 위치 추적 시작 (iOS 화면 잠금 시 JS 정지 대응)
+    if (Platform.isIOS && window.CapBridge?.BackgroundSafety) {
+      const alertDist = Settings.get().alertDistance;
+      window.CapBridge.BackgroundSafety.startBackgroundTracking({
+        zones:    allZones.map(z => ({ id: z.id, lat: z.lat, lng: z.lng, type: z.type, alertDist })),
+        alertDist,
+        // iOS 전용: 화면 잠금·백그라운드에서도 GPS 센서를 OS가 강제로 유지
+        backgroundRequested:                  true,
+        stale:                                false,
+        distanceFilter:                       1,
+        desiredAccuracy:                      2,
+        pausesLocationUpdatesAutomatically:   false,
+        showsBackgroundLocationIndicator:     true,
+      }).catch(() => {});
+    }
 
     // 알림 권한 요청 — iOS 16.4+: 잠금화면 배너 표시에 필수
     if ('Notification' in window && Notification.permission === 'default') {
@@ -1074,7 +855,11 @@ const Ride = {
     clearInterval(this.timer);
     stopZonePolling();
     WakeLock.release();
-    SilentAudioLoop.setMode('ambient'); // 라이딩 종료 → ambient 복귀 (미디어 위젯 제거)
+
+    // 네이티브 백그라운드 위치 추적 중단
+    if (Platform.isIOS && window.CapBridge?.BackgroundSafety) {
+      window.CapBridge.BackgroundSafety.stopBackgroundTracking({}).catch(() => {});
+    }
 
     // 지도 베어링 리셋 (북쪽 위) + LERP 애니메이션 취소
     if (GPS._bearingAnimFrame) { cancelAnimationFrame(GPS._bearingAnimFrame); GPS._bearingAnimFrame = null; }
@@ -1137,11 +922,8 @@ const Ride = {
   }
 };
 
-// 백그라운드 전환 시 타이머 처리 + iOS PWA GPS 재시작 + 오디오 세션 재개
+// 백그라운드 전환 시 타이머 처리 + iOS GPS 재시작
 document.addEventListener('visibilitychange', () => {
-  // 화면 켜짐·꺼짐 전환 모두에서 즉시 재개 — 백그라운드 진입 시 suspended 방지
-  SilentAudioLoop.resume();
-
   if (!document.hidden) {
     // iOS PWA: 백그라운드에서 watchPosition이 소멸한 경우 재시작
     if (!GPS.active) setTimeout(() => GPS.startTracking(), 600);
@@ -1160,10 +942,9 @@ document.addEventListener('visibilitychange', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // Alert 모듈 — 최소 UI, 5초 자동 소멸, TTS + 진동 + 음향 동시
 //
-// 오디오 덕킹 흐름:
-//   show() → audioSession 'transient' 전환 (배경 음악 자동 감소)
-//            HazardAudio 경고음 + TTS 음성이 메인 오디오로 선명하게 출력
-//   dismiss() → audioSession 'ambient' 복귀 (배경 음악 원래 볼륨으로 자동 복구)
+// 오디오 흐름:
+//   show() → NativeAudio(AVAudioPlayer) 경고음 + NativeTTS(AVSpeechSynthesizer) 음성
+//   dismiss() → 배너 제거
 // ═══════════════════════════════════════════════════════════════════════════
 const Alert = {
   show(zone) {
@@ -1185,15 +966,11 @@ const Alert = {
     // 강화 진동 — 화면 꺼짐 상태에서도 navigator.vibrate 는 동작
     if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 800]);
 
-    // 배경 음악 덕킹 시작: ambient → transient (타 앱 음악 볼륨 자동 감소)
-    SilentAudioLoop.setMode('transient');
+    // iOS 네이티브 경고음 — AVAudioPlayer, 잠금화면에서도 동작
+    NativeAudio.play(zone.type);
 
-    // 위험 유형별 경고음 (Web Audio API — 오디오 세션 활성 시 화면 꺼짐에도 동작)
-    HazardAudio.play(zone.type);
-
-    // 음성 안내 — AudioContext 기반(VoiceAlert) 우선: 화면 꺼짐에도 동작
-    // 비프음 완료(~0.85초) 후 음성 시작 → 비프 + 목소리 명확히 구분
-    VoiceAlert.play(zone.type, ttsMsg, 0.85);
+    // iOS 네이티브 TTS — AVSpeechSynthesizer, 비프음(~0.85초) 완료 후 음성 시작
+    NativeTTS.speak(ttsMsg, 0.85);
 
     // SW 알림은 checkProximity 진입 시 이미 발송됨 — Alert.show 에서 중복 호출 제거
   },
@@ -1214,9 +991,6 @@ const Alert = {
     banner.classList.add('fade-out');
     setTimeout(() => { banner.classList.remove('show', 'fade-out'); }, 400);
     currentAlertZone = null;
-
-    // 경고 종료: transient → ambient 복귀 (배경 음악 원래 볼륨 자동 복구)
-    SilentAudioLoop.setMode('ambient');
   }
 };
 
@@ -1810,9 +1584,6 @@ if ('serviceWorker' in navigator) {
     })
     .catch(() => {});
 
-  // TTS 음성 파일 조기 프리페치 — 앱 로드 3초 후 백그라운드 fetch 시작
-  // AudioContext 없이 raw MP3 데이터만 확보 → 라이딩 시작 즉시 재생 가능
-  setTimeout(() => VoiceAlert.prefetch(), 3000);
 }
 
 // ── 지도 인터랙션 감지 — 사용자가 드래그/핀치하면 autoCenter 일시 정지 ──────
@@ -1832,10 +1603,3 @@ LocBtn.init();
 GpsDebug.init();
 GPS.startTracking();
 
-// ── iOS 오디오 세션 선제 언락 + TTS 디코딩 ──────────────────────────────────
-// 앱 최초 터치(사용자 제스처) 시 AudioContext 언락 → 이후 화면 잠금에 대비
-// unlock() 내부에서 VoiceAlert.decodeAll() 이 자동 호출되어 음성 재생 준비 완료
-// 라이딩 시작 버튼에서도 다시 호출 → 이중 보장
-const _onFirstGesture = () => SilentAudioLoop.unlock();
-document.addEventListener('touchstart', _onFirstGesture, { once: true, capture: true, passive: true });
-document.addEventListener('click',      _onFirstGesture, { once: true, capture: true, passive: true });
