@@ -1,0 +1,13 @@
+{
+  "appId": "com.gansam.smartrider",
+  "appName": "Smart Rider",
+  "webDir": "public",
+  "plugins": {
+    "TextToSpeech": {},
+    "NativeAudio": {}
+  },
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#0f172a"
+  }
+}

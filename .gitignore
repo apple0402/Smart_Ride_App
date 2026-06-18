@@ -2,3 +2,9 @@ node_modules/
 .env
 *.log
 scripts/
+
+# Xcode / iOS build artifacts
+ios/DerivedData/
+ios/App/App.xcodeproj/xcuserdata/
+ios/App/Pods/
+*.xcuserstate
