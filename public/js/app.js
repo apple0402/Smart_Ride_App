@@ -712,8 +712,8 @@ const GPS = {
     checkProximity(lat, lng);
 
     // 헤드업 지도 회전 — GPS 좌표 베어링 + 이동 평균 필터 + LERP 애니메이션
-    // rawKmh > 2 조건 제거: GPS 좌표 차이 베어링은 ≥1m 이동 시에만 onPosition에서 이미 갱신됨
-    if (Ride.active && this._lastHeading != null) {
+    // 시속 3km/h 이하(정지·정차)일 때는 베어링 갱신을 건너뛰어 마지막 회전각을 유지(Lock) — 제자리 회전 방지
+    if (Ride.active && this._lastHeading != null && (rawKmh == null || rawKmh > 3)) {
       if (map.setBearing) {
         // 이동 평균 버퍼에 추가 (최근 5개로 원형 평균 — GPS 튐 완화)
         this._headingBuffer.push(this._lastHeading);
