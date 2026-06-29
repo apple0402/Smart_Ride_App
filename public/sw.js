@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const CACHE_NAME = 'safe-ride-v17';
-const PRECACHE   = ['/icons/icon-192.png', '/icons/icon-512.png', '/assets/silent.wav'];
+const PRECACHE   = ['/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(
@@ -142,25 +142,6 @@ self.addEventListener('fetch', event => {
     'cartocdn.com', 'unpkg.com', 'cdn.jsdelivr.net', 'tailwindcss.com',
     'translate.google.com'];
   if (externalHosts.some(h => url.hostname.includes(h))) return;
-
-  // ── TTS 오디오: 캐시 우선 → 없으면 네트워크 후 캐시 저장 (7일 재사용) ──
-  // 화면 꺼짐 후 음성 재생 시 네트워크 없이도 즉시 재생 가능
-  if (url.pathname === '/api/tts') {
-    event.respondWith(
-      caches.open(CACHE_NAME).then(async cache => {
-        const cached = await cache.match(event.request);
-        if (cached) return cached;
-        try {
-          const response = await fetch(event.request);
-          if (response.ok) cache.put(event.request, response.clone());
-          return response;
-        } catch {
-          return new Response('', { status: 503, statusText: 'TTS offline' });
-        }
-      })
-    );
-    return;
-  }
 
   // JS · HTML · JSON(manifest) — 항상 네트워크 직접 요청 (캐시 금지)
   const noCache = url.pathname.endsWith('.js')

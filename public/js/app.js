@@ -680,7 +680,7 @@ const GPS = {
   _applyPosition(lat, lng, rawKmh, accuracy) {
     // GPS 첫 수신 시 마커 생성 (하드코딩 기본 위치 없음)
     if (!riderMarker) {
-      riderMarker = L.marker([lat, lng], { icon: riderIcon, zIndexOffset: 1000 }).addTo(map);
+      riderMarker = L.marker([lat, lng], { icon: riderIcon, zIndexOffset: 10000 }).addTo(map);
     } else {
       riderMarker.setLatLng([lat, lng]);
     }
@@ -832,7 +832,6 @@ const Ride = {
       window.CapBridge.BackgroundSafety.startBackgroundTracking({
         zones:    allZones.map(z => ({ id: z.id, lat: z.lat, lng: z.lng, type: z.type, alertDist })),
         alertDist,
-        // iOS 전용: 화면 잠금·백그라운드에서도 GPS 센서를 OS가 강제로 유지
         backgroundRequested:                  true,
         stale:                                false,
         distanceFilter:                       1,
@@ -1602,4 +1601,46 @@ Auth.init();
 LocBtn.init();
 GpsDebug.init();
 GPS.startTracking();
+
+// iOS 네이티브 GPS 브릿지 — 화면 잠금/백그라운드 시(document.hidden) navigator.geolocation이 멈추므로
+// 네이티브 CoreLocation이 받은 좌표+진행방향(course)을 대신 주입해 지도 헤드업 회전·마커 위치를 이어감.
+// 포그라운드에서는 기존 navigator.geolocation watchPosition을 단일 소스로 유지해 거리 중복 집계 방지.
+if (Platform.isIOS && window.CapBridge?.BackgroundSafety) {
+  // 백그라운드 GPS → 지도·헤딩 업데이트 (화면 잠금 중 navigator.geolocation 정지 대응)
+  window.CapBridge.BackgroundSafety.addListener('locationUpdate', data => {
+    if (!document.hidden) return;
+    GPS.onPosition({
+      coords: {
+        latitude: data.lat, longitude: data.lng,
+        speed: data.speed ?? null, accuracy: data.accuracy ?? null,
+        heading: data.course ?? null,
+      }
+    });
+  });
+
+  // 잠금화면 로컬 알림 탭 → 앱 복귀 시 투표창 자동 표시
+  // AppDelegate → BackgroundSafetyPlugin.notifyListeners('notificationVoteAction') 체인으로 전달됨
+  window.CapBridge.BackgroundSafety.addListener('notificationVoteAction', data => {
+    const { zoneId, zoneType } = data;
+    // 이미 로드된 구역 목록에서 해당 구역 검색
+    const zone = allZones.find(z => z.id === zoneId);
+    if (zone) {
+      const alreadyVoted = Auth.user
+        ? (Array.isArray(zone.safeVoterIds) && zone.safeVoterIds.includes(Auth.user.id))
+        : false;
+      if (!alreadyVoted) VotePopup.show(zone);
+    } else if (zoneType) {
+      // 구역 정보가 없으면 최신 구역 목록 재로드 후 재시도
+      loadZones().then(() => {
+        const z = allZones.find(z => z.id === zoneId);
+        if (z) {
+          const voted = Auth.user
+            ? (Array.isArray(z.safeVoterIds) && z.safeVoterIds.includes(Auth.user.id))
+            : false;
+          if (!voted) VotePopup.show(z);
+        }
+      }).catch(() => {});
+    }
+  });
+}
 
