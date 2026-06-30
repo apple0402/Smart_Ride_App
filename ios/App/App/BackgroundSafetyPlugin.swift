@@ -182,13 +182,12 @@ public class BackgroundSafetyPlugin: CAPPlugin, CLLocationManagerDelegate {
         guard !alertedZones.contains(id) else { return }
         alertedZones.insert(id)
 
-        // 앱이 백그라운드(화면 잠금)일 때만 네이티브 오디오·TTS 실행 — 포그라운드는 JS 레이어가 담당
-        if UIApplication.shared.applicationState == .background {
-            activateAudioSession()
-            playSound(type: type)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                self?.speakTTS(type: type)
-            }
+        // 화면 잠금 여부와 무관하게 항상 네이티브 오디오·TTS 직접 실행
+        // — iOS는 화면 잠금 시 WebView JS를 동결하므로 JS 레이어에 의존하지 않음
+        activateAudioSession()
+        playSound(type: type)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.speakTTS(type: type)
         }
         notifyListeners("backgroundAlert", data: ["zoneType": type, "distance": distance])
 
@@ -202,7 +201,10 @@ public class BackgroundSafetyPlugin: CAPPlugin, CLLocationManagerDelegate {
 
     private func triggerZoneExit(type: String, id: String) {
         let korean = zoneKorean[type] ?? "위험 구역"
-        sendExitLocalNotification(zoneId: id, zoneType: type, korean: korean)
+        // 포그라운드(.active)에서는 JS VotePopup이 즉시 처리 — 로컬 알림 중복 방지
+        if UIApplication.shared.applicationState != .active {
+            sendExitLocalNotification(zoneId: id, zoneType: type, korean: korean)
+        }
         notifyListeners("backgroundZoneExit", data: ["zoneType": type, "zoneId": id])
     }
 
@@ -241,17 +243,21 @@ public class BackgroundSafetyPlugin: CAPPlugin, CLLocationManagerDelegate {
     // MARK: - Audio Session
 
     private func activateAudioSession() {
-        try? AVAudioSession.sharedInstance().setActive(true)
+        let session = AVAudioSession.sharedInstance()
+        // 백그라운드·잠금화면에서도 재생되도록 카테고리 재설정 후 활성화
+        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers, .duckOthers])
+        try? session.setActive(true)
     }
 
     // MARK: - Audio Preload
 
     private func preloadAudio() {
         for type in ["pothole", "slippery", "construction", "other"] {
-            guard let url = Bundle.main.url(
-                forResource: "beep_\(type)", withExtension: "wav",
-                subdirectory: "public/sounds"
-            ) else { continue }
+            // Capacitor 웹 에셋 경로 → public/sounds/. 실패 시 sounds/, 루트 순으로 폴백
+            let url = Bundle.main.url(forResource: "beep_\(type)", withExtension: "wav", subdirectory: "public/sounds")
+                   ?? Bundle.main.url(forResource: "beep_\(type)", withExtension: "wav", subdirectory: "sounds")
+                   ?? Bundle.main.url(forResource: "beep_\(type)", withExtension: "wav")
+            guard let url = url else { continue }
             guard let player = try? AVAudioPlayer(contentsOf: url) else { continue }
             player.prepareToPlay()
             audioPlayers[type] = player

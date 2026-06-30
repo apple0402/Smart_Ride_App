@@ -254,8 +254,9 @@ async function loadZones() {
       type:  'ZONES_DATA',
       zones: allZones.map(z => ({ id: z.id, lat: z.lat, lng: z.lng, type: z.type, title: z.title }))
     });
-    // 네이티브 백그라운드 추적에 최신 구역 데이터 동기화 (화면 잠금 대응)
-    if (Platform.isIOS && window.CapBridge?.BackgroundSafety && Ride.active) {
+    // 네이티브 단에 최신 구역 데이터 항상 동기화 — Ride 시작 전에도 로드해 두어야
+    // 화면 잠금 직후 Swift가 즉시 거리 계산을 시작할 수 있음
+    if (Platform.isIOS && window.CapBridge?.BackgroundSafety) {
       const alertDist = Settings.get().alertDistance;
       window.CapBridge.BackgroundSafety.setZones({
         zones:    allZones.map(z => ({ id: z.id, lat: z.lat, lng: z.lng, type: z.type, alertDist })),
@@ -387,16 +388,6 @@ function checkProximity(lat, lng) {
     } else if (isOutside && wasEntered) {
       // ── 이탈 확정 (히스테리시스 통과) ──
       enteredZones.delete(z.id);
-
-      // 백그라운드(화면 잠금) 상태 시 SW 알림으로 이탈 통보 (iOS·Android 공통 ready fallback)
-      if (document.hidden) {
-        sendSwMessage({
-          type:  'DANGER_ZONE_EXIT',
-          title: '✅ 위험구역 통과',
-          body:  `[${ZONE_KOREAN[z.type] || z.title}] 구역을 지나왔습니다. 안전 여부를 알려주세요!`,
-          icon:  '/icons/icon-192.png'
-        });
-      }
 
       // 투표 팝업: 라이딩 중이면 alertsEnabled 설정과 무관하게 무조건 표시
       if (Ride.active) {
@@ -965,13 +956,8 @@ const Alert = {
     // 강화 진동 — 화면 꺼짐 상태에서도 navigator.vibrate 는 동작
     if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 800]);
 
-    // iOS 네이티브 경고음 — AVAudioPlayer, 잠금화면에서도 동작
-    NativeAudio.play(zone.type);
-
-    // iOS 네이티브 TTS — AVSpeechSynthesizer, 비프음(~0.85초) 완료 후 음성 시작
-    NativeTTS.speak(ttsMsg, 0.85);
-
-    // SW 알림은 checkProximity 진입 시 이미 발송됨 — Alert.show 에서 중복 호출 제거
+    // 오디오·TTS는 BackgroundSafetyPlugin(Swift)이 화면 잠금 여부 무관하게 직접 처리
+    // — 포그라운드/백그라운드 이중 재생 방지를 위해 JS 레이어에서는 오디오 호출 제거
   },
 
   showSpeedWarning(speed, limit) {
@@ -1616,6 +1602,21 @@ if (Platform.isIOS && window.CapBridge?.BackgroundSafety) {
         heading: data.course ?? null,
       }
     });
+  });
+
+  // Swift 네이티브가 구역 이탈 감지 → 포그라운드 복귀 시 VotePopup 표시
+  // 화면 잠금 중 이탈이 발생한 경우, 알림 탭 외 경로로 앱이 복귀했을 때의 폴백
+  window.CapBridge.BackgroundSafety.addListener('backgroundZoneExit', data => {
+    if (!Ride.active) return;
+    const { zoneId } = data;
+    // 이미 JS checkProximity가 처리한 구역(enteredZones에서 제거된)은 중복 표시 방지
+    if (enteredZones.has(zoneId)) return;
+    const zone = allZones.find(z => z.id === zoneId);
+    if (!zone) return;
+    const alreadyVoted = Auth.user
+      ? (Array.isArray(zone.safeVoterIds) && zone.safeVoterIds.includes(Auth.user.id))
+      : false;
+    if (!alreadyVoted) VotePopup.show(zone);
   });
 
   // 잠금화면 로컬 알림 탭 → 앱 복귀 시 투표창 자동 표시
