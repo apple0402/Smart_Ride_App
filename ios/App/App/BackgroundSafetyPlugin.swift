@@ -3,11 +3,21 @@ import Foundation
 import Capacitor
 import CoreLocation
 import AVFoundation
-import UserNotifications
-import UIKit
 
 @objc(BackgroundSafety)
-public class BackgroundSafetyPlugin: CAPPlugin, CLLocationManagerDelegate {
+public class BackgroundSafetyPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelegate {
+
+    // Capacitor 8은 이 프로토콜을 구현하지 않으면 registerPluginInstance()가 플러그인을 조용히 무시함
+    // (capacitor.config.json의 packageClassList는 npm 플러그인 전용이라 로컬 플러그인은 별도 등록 필요 — MainViewController.swift 참고)
+    public let identifier = "BackgroundSafety"
+    public let jsName = "BackgroundSafety"
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "startBackgroundTracking", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stopBackgroundTracking", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setZones", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "syncAuthSession", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "clearAuthSession", returnType: CAPPluginReturnPromise)
+    ]
 
     // 플러그인 인스턴스와 함께 앱 전체 생명주기 동안 유지되는 강한 참조 — 옵셔널 해제로 인한 GPS 중단 방지
     private let locationManager = CLLocationManager()
@@ -26,11 +36,20 @@ public class BackgroundSafetyPlugin: CAPPlugin, CLLocationManagerDelegate {
         "other":        "위험 구역 주의하세요"
     ]
 
+    // public/js/app.js의 ZONE_KOREAN과 동일한 문구로 통일 — 잠금화면 알림이 인앱 배너와 같은 텍스트를 쓰도록
     private let zoneKorean: [String: String] = [
         "pothole":      "포트홀 / 크랙",
         "slippery":     "맨홀 / 미끄러움",
-        "construction": "공사 구간",
-        "other":        "위험 구역"
+        "construction": "도로 / 보도 공사",
+        "other":        "기타 위험"
+    ]
+
+    // public/js/app.js의 ZONE_ICONS와 동일
+    private let zoneIcons: [String: String] = [
+        "pothole":      "🕳️",
+        "slippery":     "🧼",
+        "construction": "🚧",
+        "other":        "⚠️"
     ]
 
     override public func load() {
@@ -41,25 +60,23 @@ public class BackgroundSafetyPlugin: CAPPlugin, CLLocationManagerDelegate {
         locationManager.pausesLocationUpdatesAutomatically = false
         locationManager.showsBackgroundLocationIndicator = true
         preloadAudio()
-
-        // 앱 포그라운드 복귀 시 펜딩 투표 알림 처리 — 알림 탭 후 앱이 열렸을 때 투표창 표시
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handlePendingVoteNotification(_:)),
-            name: NSNotification.Name("SmartRiderZoneExitVote"),
-            object: nil
-        )
     }
 
-    // AppDelegate로부터 알림 탭 이벤트 수신 → JS VotePopup 트리거
-    @objc private func handlePendingVoteNotification(_ notification: Foundation.Notification) {
-        guard let info = notification.userInfo else { return }
-        let zoneId   = info["zoneId"]   as? String ?? ""
-        let zoneType = info["zoneType"] as? String ?? "other"
-        notifyListeners("notificationVoteAction", data: [
-            "zoneId":   zoneId,
-            "zoneType": zoneType
-        ])
+    // MARK: - Auth Session Bridge (JS 로그인 세션 → 위젯 익스텐션 공유 Keychain)
+
+    @objc func syncAuthSession(_ call: CAPPluginCall) {
+        guard let token  = call.getString("accessToken"),
+              let userId = call.getString("userId") else {
+            call.reject("accessToken/userId가 필요합니다")
+            return
+        }
+        KeychainHelper.saveAuthSession(accessToken: token, userId: userId)
+        call.resolve()
+    }
+
+    @objc func clearAuthSession(_ call: CAPPluginCall) {
+        KeychainHelper.clearAuthSession()
+        call.resolve()
     }
 
     // MARK: - Plugin Methods
@@ -81,6 +98,9 @@ public class BackgroundSafetyPlugin: CAPPlugin, CLLocationManagerDelegate {
             self.locationManager.pausesLocationUpdatesAutomatically = false
             self.locationManager.showsBackgroundLocationIndicator = true
 
+            // 라이딩 시작은 항상 앱이 포그라운드일 때 호출되므로, 잠금화면 카드를 여기서 1회만 미리 생성
+            LiveActivityManager.shared.startSession()
+
             switch self.locationManager.authorizationStatus {
             case .authorizedAlways:
                 self.locationManager.startUpdatingLocation()
@@ -101,6 +121,7 @@ public class BackgroundSafetyPlugin: CAPPlugin, CLLocationManagerDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.locationManager.stopUpdatingLocation()
             self?.isTracking = false
+            LiveActivityManager.shared.endSession()
         }
         call.resolve()
     }
@@ -191,53 +212,24 @@ public class BackgroundSafetyPlugin: CAPPlugin, CLLocationManagerDelegate {
         }
         notifyListeners("backgroundAlert", data: ["zoneType": type, "distance": distance])
 
+        // 오디오와 동시에 잠금화면 경고 카드(Live Activity)를 경고 상태로 갱신
+        let korean = zoneKorean[type] ?? "기타 위험"
+        let icon   = zoneIcons[type] ?? "⚠️"
+        let message = ttsMessages[type] ?? "위험 구역 주의하세요"
+        LiveActivityManager.shared.showEntry(zoneId: id, zoneType: type, korean: korean, icon: icon, message: message)
+
         // 60초 후 동일 구역 재알림 허용
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
             self?.alertedZones.remove(id)
         }
     }
 
-    // MARK: - Zone Exit → 로컬 알림으로 투표 유도
+    // MARK: - Zone Exit → Live Activity를 투표 카드로 갱신
 
     private func triggerZoneExit(type: String, id: String) {
         let korean = zoneKorean[type] ?? "위험 구역"
-        // 포그라운드(.active)에서는 JS VotePopup이 즉시 처리 — 로컬 알림 중복 방지
-        if UIApplication.shared.applicationState != .active {
-            sendExitLocalNotification(zoneId: id, zoneType: type, korean: korean)
-        }
+        LiveActivityManager.shared.showVote(zoneId: id, zoneType: type, korean: korean)
         notifyListeners("backgroundZoneExit", data: ["zoneType": type, "zoneId": id])
-    }
-
-    private func sendExitLocalNotification(zoneId: String, zoneType: String, korean: String) {
-        let center = UNUserNotificationCenter.current()
-
-        center.getNotificationSettings { [weak self] settings in
-            guard settings.authorizationStatus == .authorized ||
-                  settings.authorizationStatus == .provisional else { return }
-            guard let self = self else { return }
-
-            let content = UNMutableNotificationContent()
-            content.title = "✅ 위험 지역 통과"
-            content.body  = "[\(korean)] 구역을 지나왔습니다. 현재 안전한가요?"
-            content.sound = .default
-            content.userInfo = [
-                "action":   "vote",
-                "zoneId":   zoneId,
-                "zoneType": zoneType
-            ]
-
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1.0, repeats: false)
-            let request = UNNotificationRequest(
-                identifier: "zone_exit_\(zoneId)",
-                content:    content,
-                trigger:    trigger
-            )
-            center.add(request) { error in
-                if let error = error {
-                    print("[SmartRider] 로컬 알림 발송 실패: \(error)")
-                }
-            }
-        }
     }
 
     // MARK: - Audio Session

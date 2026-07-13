@@ -16,6 +16,17 @@
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		B5F2C3D4E5A6B7C8D9E0F1A3 /* BackgroundSafetyPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1A2 /* BackgroundSafetyPlugin.swift */; };
+		B5F2C3D4E5A6B7C8D9E0F1B1 /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1B0 /* MainViewController.swift */; };
+		B5F2C3D4E5A6B7C8D9E0F1C1 /* SafeRideActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1C0 /* SafeRideActivityAttributes.swift */; };
+		B5F2C3D4E5A6B7C8D9E0F1C3 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1C2 /* KeychainHelper.swift */; };
+		B5F2C3D4E5A6B7C8D9E0F1C5 /* LiveActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1C4 /* LiveActivityManager.swift */; };
+		B5F2C3D4E5A6B7C8D9E0F1D1 /* SafeRideWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1D0 /* SafeRideWidgetsBundle.swift */; };
+		B5F2C3D4E5A6B7C8D9E0F1D3 /* SafeRideLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1D2 /* SafeRideLiveActivity.swift */; };
+		B5F2C3D4E5A6B7C8D9E0F1D5 /* VoteIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1D4 /* VoteIntents.swift */; };
+		B5F2C3D4E5A6B7C8D9E0F1D7 /* SupabaseVoteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1D6 /* SupabaseVoteService.swift */; };
+		B5F2C3D4E5A6B7C8D9E0F1D8 /* SafeRideActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1C0 /* SafeRideActivityAttributes.swift */; };
+		B5F2C3D4E5A6B7C8D9E0F1D9 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1C2 /* KeychainHelper.swift */; };
+		B5F2C3D4E5A6B7C8D9E0F1DE /* SafeRideWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1DD /* SafeRideWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,7 +41,33 @@
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		B5F2C3D4E5A6B7C8D9E0F1A2 /* BackgroundSafetyPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundSafetyPlugin.swift; sourceTree = "<group>"; };
+		B5F2C3D4E5A6B7C8D9E0F1B0 /* MainViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
+		B5F2C3D4E5A6B7C8D9E0F1C0 /* SafeRideActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafeRideActivityAttributes.swift; sourceTree = "<group>"; };
+		B5F2C3D4E5A6B7C8D9E0F1C2 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
+		B5F2C3D4E5A6B7C8D9E0F1C4 /* LiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityManager.swift; sourceTree = "<group>"; };
+		B5F2C3D4E5A6B7C8D9E0F1D0 /* SafeRideWidgetsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafeRideWidgetsBundle.swift; sourceTree = "<group>"; };
+		B5F2C3D4E5A6B7C8D9E0F1D2 /* SafeRideLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafeRideLiveActivity.swift; sourceTree = "<group>"; };
+		B5F2C3D4E5A6B7C8D9E0F1D4 /* VoteIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoteIntents.swift; sourceTree = "<group>"; };
+		B5F2C3D4E5A6B7C8D9E0F1D6 /* SupabaseVoteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseVoteService.swift; sourceTree = "<group>"; };
+		B5F2C3D4E5A6B7C8D9E0F1DA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B5F2C3D4E5A6B7C8D9E0F1DB /* SafeRideWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SafeRideWidgets.entitlements; sourceTree = "<group>"; };
+		B5F2C3D4E5A6B7C8D9E0F1DC /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
+		B5F2C3D4E5A6B7C8D9E0F1DD /* SafeRideWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SafeRideWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B5F2C3D4E5A6B7C8D9E0F1DF /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B5F2C3D4E5A6B7C8D9E0F1DE /* SafeRideWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		504EC3011FED79650016851F /* Frameworks */ = {
@@ -38,6 +75,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B5F2C3D4E5A6B7C8D9E0F1E2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -49,6 +93,7 @@
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
 				504EC3061FED79650016851F /* App */,
+				B5F2C3D4E5A6B7C8D9E0F1E9 /* SafeRideWidgets */,
 				504EC3051FED79650016851F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -57,6 +102,7 @@
 			isa = PBXGroup;
 			children = (
 				504EC3041FED79650016851F /* App.app */,
+				B5F2C3D4E5A6B7C8D9E0F1DD /* SafeRideWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -67,6 +113,11 @@
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				B5F2C3D4E5A6B7C8D9E0F1A2 /* BackgroundSafetyPlugin.swift */,
+				B5F2C3D4E5A6B7C8D9E0F1B0 /* MainViewController.swift */,
+				B5F2C3D4E5A6B7C8D9E0F1C0 /* SafeRideActivityAttributes.swift */,
+				B5F2C3D4E5A6B7C8D9E0F1C2 /* KeychainHelper.swift */,
+				B5F2C3D4E5A6B7C8D9E0F1C4 /* LiveActivityManager.swift */,
+				B5F2C3D4E5A6B7C8D9E0F1DC /* App.entitlements */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -75,6 +126,19 @@
 				50B271D01FEDC1A000F3C39B /* public */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		B5F2C3D4E5A6B7C8D9E0F1E9 /* SafeRideWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				B5F2C3D4E5A6B7C8D9E0F1D0 /* SafeRideWidgetsBundle.swift */,
+				B5F2C3D4E5A6B7C8D9E0F1D2 /* SafeRideLiveActivity.swift */,
+				B5F2C3D4E5A6B7C8D9E0F1D4 /* VoteIntents.swift */,
+				B5F2C3D4E5A6B7C8D9E0F1D6 /* SupabaseVoteService.swift */,
+				B5F2C3D4E5A6B7C8D9E0F1DA /* Info.plist */,
+				B5F2C3D4E5A6B7C8D9E0F1DB /* SafeRideWidgets.entitlements */,
+			);
+			path = SafeRideWidgets;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -87,10 +151,12 @@
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				B5F2C3D4E5A6B7C8D9E0F1DF /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B5F2C3D4E5A6B7C8D9E0F1E5 /* PBXTargetDependency */,
 			);
 			name = App;
 			packageProductDependencies = (
@@ -100,7 +166,42 @@
 			productReference = 504EC3041FED79650016851F /* App.app */;
 			productType = "com.apple.product-type.application";
 		};
+		B5F2C3D4E5A6B7C8D9E0F1E0 /* SafeRideWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B5F2C3D4E5A6B7C8D9E0F1E8 /* Build configuration list for PBXNativeTarget "SafeRideWidgets" */;
+			buildPhases = (
+				B5F2C3D4E5A6B7C8D9E0F1E1 /* Sources */,
+				B5F2C3D4E5A6B7C8D9E0F1E2 /* Frameworks */,
+				B5F2C3D4E5A6B7C8D9E0F1E3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SafeRideWidgets;
+			productName = SafeRideWidgets;
+			productReference = B5F2C3D4E5A6B7C8D9E0F1DD /* SafeRideWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		B5F2C3D4E5A6B7C8D9E0F1E4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B5F2C3D4E5A6B7C8D9E0F1E0;
+			remoteInfo = SafeRideWidgets;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		B5F2C3D4E5A6B7C8D9E0F1E5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B5F2C3D4E5A6B7C8D9E0F1E0 /* SafeRideWidgets */;
+			targetProxy = B5F2C3D4E5A6B7C8D9E0F1E4 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		504EC2FC1FED79650016851F /* Project object */ = {
@@ -118,6 +219,10 @@
 								enabled = 1;
 							};
 						};
+					};
+					B5F2C3D4E5A6B7C8D9E0F1E0 = {
+						CreatedOnToolsVersion = 15.0;
+						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -138,6 +243,7 @@
 			projectRoot = "";
 			targets = (
 				504EC3031FED79650016851F /* App */,
+				B5F2C3D4E5A6B7C8D9E0F1E0 /* SafeRideWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -156,6 +262,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B5F2C3D4E5A6B7C8D9E0F1E3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -165,6 +278,23 @@
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				B5F2C3D4E5A6B7C8D9E0F1A3 /* BackgroundSafetyPlugin.swift in Sources */,
+				B5F2C3D4E5A6B7C8D9E0F1B1 /* MainViewController.swift in Sources */,
+				B5F2C3D4E5A6B7C8D9E0F1C1 /* SafeRideActivityAttributes.swift in Sources */,
+				B5F2C3D4E5A6B7C8D9E0F1C3 /* KeychainHelper.swift in Sources */,
+				B5F2C3D4E5A6B7C8D9E0F1C5 /* LiveActivityManager.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B5F2C3D4E5A6B7C8D9E0F1E1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B5F2C3D4E5A6B7C8D9E0F1D1 /* SafeRideWidgetsBundle.swift in Sources */,
+				B5F2C3D4E5A6B7C8D9E0F1D3 /* SafeRideLiveActivity.swift in Sources */,
+				B5F2C3D4E5A6B7C8D9E0F1D5 /* VoteIntents.swift in Sources */,
+				B5F2C3D4E5A6B7C8D9E0F1D7 /* SupabaseVoteService.swift in Sources */,
+				B5F2C3D4E5A6B7C8D9E0F1D8 /* SafeRideActivityAttributes.swift in Sources */,
+				B5F2C3D4E5A6B7C8D9E0F1D9 /* KeychainHelper.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -239,7 +369,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
@@ -290,7 +420,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -304,11 +434,12 @@
 			baseConfigurationReference = 958DCC722DB07C7200EA8C5F /* debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = H7M78L3MFD;
 				INFOPLIST_FILE = App/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -327,11 +458,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = H7M78L3MFD;
 				INFOPLIST_FILE = App/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -340,6 +472,58 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.gansam.smartrider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B5F2C3D4E5A6B7C8D9E0F1E6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = SafeRideWidgets/SafeRideWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H7M78L3MFD;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SafeRideWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gansam.smartrider.SafeRideWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B5F2C3D4E5A6B7C8D9E0F1E7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = SafeRideWidgets/SafeRideWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H7M78L3MFD;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SafeRideWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gansam.smartrider.SafeRideWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -362,6 +546,15 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B5F2C3D4E5A6B7C8D9E0F1E8 /* Build configuration list for PBXNativeTarget "SafeRideWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B5F2C3D4E5A6B7C8D9E0F1E6 /* Debug */,
+				B5F2C3D4E5A6B7C8D9E0F1E7 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

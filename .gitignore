@@ -2,6 +2,7 @@ node_modules/
 .env
 *.log
 scripts/
+.DS_Store
 
 # Xcode / iOS build artifacts
 ios/DerivedData/

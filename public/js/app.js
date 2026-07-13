@@ -1387,12 +1387,20 @@ const Auth = {
     sb.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         this._setUser(session?.user || null);
+        // 잠금화면 Live Activity 투표 버튼이 Supabase에 직접 접근할 수 있도록 토큰을 네이티브 Keychain에 동기화
+        if (session?.access_token && session.user) {
+          window.CapBridge?.BackgroundSafety?.syncAuthSession({
+            accessToken: session.access_token,
+            userId: session.user.id
+          }).catch(() => {});
+        }
         // 이메일 인증 완료 감지
         if ((type === 'signup' || type === 'email' || code) && event === 'SIGNED_IN') {
           setTimeout(() => VerificationModal.show(), 600);
         }
       } else if (event === 'SIGNED_OUT') {
         this._setUser(null);
+        window.CapBridge?.BackgroundSafety?.clearAuthSession().catch(() => {});
       }
     });
   },
@@ -1619,29 +1627,5 @@ if (Platform.isIOS && window.CapBridge?.BackgroundSafety) {
     if (!alreadyVoted) VotePopup.show(zone);
   });
 
-  // 잠금화면 로컬 알림 탭 → 앱 복귀 시 투표창 자동 표시
-  // AppDelegate → BackgroundSafetyPlugin.notifyListeners('notificationVoteAction') 체인으로 전달됨
-  window.CapBridge.BackgroundSafety.addListener('notificationVoteAction', data => {
-    const { zoneId, zoneType } = data;
-    // 이미 로드된 구역 목록에서 해당 구역 검색
-    const zone = allZones.find(z => z.id === zoneId);
-    if (zone) {
-      const alreadyVoted = Auth.user
-        ? (Array.isArray(zone.safeVoterIds) && zone.safeVoterIds.includes(Auth.user.id))
-        : false;
-      if (!alreadyVoted) VotePopup.show(zone);
-    } else if (zoneType) {
-      // 구역 정보가 없으면 최신 구역 목록 재로드 후 재시도
-      loadZones().then(() => {
-        const z = allZones.find(z => z.id === zoneId);
-        if (z) {
-          const voted = Auth.user
-            ? (Array.isArray(z.safeVoterIds) && z.safeVoterIds.includes(Auth.user.id))
-            : false;
-          if (!voted) VotePopup.show(z);
-        }
-      }).catch(() => {});
-    }
-  });
 }
 
