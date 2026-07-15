@@ -237,7 +237,7 @@ public class BackgroundSafetyPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationMana
     private func activateAudioSession() {
         let session = AVAudioSession.sharedInstance()
         // 백그라운드·잠금화면에서도 재생되도록 카테고리 재설정 후 활성화
-        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers, .duckOthers])
+        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
         try? session.setActive(true)
     }
 
