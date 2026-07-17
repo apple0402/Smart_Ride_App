@@ -43,17 +43,32 @@ final class LiveActivityManager {
         Task { await activity.update(.init(state: state, staleDate: nil)) }
     }
 
-    // MARK: - 구역 이탈 → 투표 카드로 갱신, 10초 후 idle 복귀
+    // MARK: - 구역 이탈 → 3초 후 경고 카드 소멸(idle), 그로부터 1.5초 후 투표 카드 표시(10초 후 idle 복귀)
 
-    func showVote(zoneId: String, zoneType: String, korean: String) {
-        guard let activity else { return }
+    private static let exitDismissDelay: TimeInterval = 3
+    private static let voteShowDelay: TimeInterval = 1.5
 
-        let state = SafeRideActivityAttributes.ContentState(
-            mode: .vote, zoneId: zoneId, zoneType: zoneType, korean: korean, icon: "", message: ""
-        )
-        Task { await activity.update(.init(state: state, staleDate: nil)) }
+    func scheduleExitSequence(zoneId: String, zoneType: String, korean: String) {
+        guard activity != nil else { return }
+        returnToIdleWorkItem?.cancel()
 
-        scheduleReturnToIdle(after: Self.voteCardLifetime)
+        let dismissWork = DispatchWorkItem { [weak self] in
+            guard let self, let activity = self.activity else { return }
+            Task { await activity.update(.init(state: self.idleState(), staleDate: nil)) }
+
+            let voteWork = DispatchWorkItem { [weak self] in
+                guard let self, let activity = self.activity else { return }
+                let state = SafeRideActivityAttributes.ContentState(
+                    mode: .vote, zoneId: zoneId, zoneType: zoneType, korean: korean, icon: "", message: ""
+                )
+                Task { await activity.update(.init(state: state, staleDate: nil)) }
+                self.scheduleReturnToIdle(after: Self.voteCardLifetime)
+            }
+            self.returnToIdleWorkItem = voteWork
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.voteShowDelay, execute: voteWork)
+        }
+        returnToIdleWorkItem = dismissWork
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.exitDismissDelay, execute: dismissWork)
     }
 
     // MARK: - 라이딩 종료 → 카드 완전 종료

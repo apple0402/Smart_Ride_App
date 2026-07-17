@@ -65,6 +65,7 @@ const EXIT_HYSTERESIS = 20;        // GPS 오차 보정 — 이탈은 alertDist 
 let currentAlertZone  = null;
 let zonesPollInterval = null;
 let _alertTimeout     = null;
+let _voteTimer        = null; // 경고 배너 소멸 → 투표 팝업 표시 사이의 1.5초 지연 타이머
 
 // ── 주소 캐시 (Nominatim 역지오코딩) ─────────────────────────────────────────
 const _addrCache = {};
@@ -389,13 +390,21 @@ function checkProximity(lat, lng) {
       // ── 이탈 확정 (히스테리시스 통과) ──
       enteredZones.delete(z.id);
 
-      // 투표 팝업: 라이딩 중이면 alertsEnabled 설정과 무관하게 무조건 표시
-      if (Ride.active) {
-        const alreadyVoted = Auth.user
-          ? (Array.isArray(z.safeVoterIds) && z.safeVoterIds.includes(Auth.user.id))
-          : false;
-        if (!alreadyVoted) VotePopup.show(z);
-      }
+      // 마커 통과 3초 후 경고 배너 소멸 → 소멸 1.5초 후 투표 팝업 표시
+      clearTimeout(_alertTimeout);
+      clearTimeout(_voteTimer);
+      _alertTimeout = setTimeout(() => {
+        Alert.dismiss();
+        _voteTimer = setTimeout(() => {
+          // 투표 팝업: 라이딩 중이면 alertsEnabled 설정과 무관하게 무조건 표시
+          if (Ride.active) {
+            const alreadyVoted = Auth.user
+              ? (Array.isArray(z.safeVoterIds) && z.safeVoterIds.includes(Auth.user.id))
+              : false;
+            if (!alreadyVoted) VotePopup.show(z);
+          }
+        }, 1500);
+      }, 3000);
     }
   });
 }
@@ -930,7 +939,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Alert 모듈 — 최소 UI, 5초 자동 소멸, TTS + 진동 + 음향 동시
+// Alert 모듈 — 최소 UI, 구역 이탈 3초 후 자동 소멸(checkProximity 제어), TTS + 진동 + 음향 동시
 //
 // 오디오 흐름:
 //   show() → NativeAudio(AVAudioPlayer) 경고음 + NativeTTS(AVSpeechSynthesizer) 음성
@@ -948,8 +957,9 @@ const Alert = {
     banner.classList.remove('fade-out');
     banner.classList.add('show');
 
+    // 배너 소멸은 고정 타이머가 아닌 구역 이탈(통과) 시점 기준 — checkProximity()의 3초/1.5초 흐름이 담당
     clearTimeout(_alertTimeout);
-    _alertTimeout = setTimeout(() => this.dismiss(), 5000);
+    clearTimeout(_voteTimer);
 
     if (Ride.active) Ride.passedZones.push(zone.id);
 

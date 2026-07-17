@@ -54,8 +54,8 @@ public class BackgroundSafetyPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationMana
 
     override public func load() {
         locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = 10
+        locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        locationManager.distanceFilter = 1
         locationManager.allowsBackgroundLocationUpdates = true
         locationManager.pausesLocationUpdatesAutomatically = false
         locationManager.showsBackgroundLocationIndicator = true
@@ -94,6 +94,8 @@ public class BackgroundSafetyPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationMana
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.isTracking = true
+            self.locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+            self.locationManager.distanceFilter = 1
             self.locationManager.allowsBackgroundLocationUpdates = true
             self.locationManager.pausesLocationUpdatesAutomatically = false
             self.locationManager.showsBackgroundLocationIndicator = true
@@ -224,11 +226,11 @@ public class BackgroundSafetyPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationMana
         }
     }
 
-    // MARK: - Zone Exit → Live Activity를 투표 카드로 갱신
+    // MARK: - Zone Exit → 3초 후 경고 카드 소멸, 그 1.5초 후 투표 카드로 갱신
 
     private func triggerZoneExit(type: String, id: String) {
         let korean = zoneKorean[type] ?? "위험 구역"
-        LiveActivityManager.shared.showVote(zoneId: id, zoneType: type, korean: korean)
+        LiveActivityManager.shared.scheduleExitSequence(zoneId: id, zoneType: type, korean: korean)
         notifyListeners("backgroundZoneExit", data: ["zoneType": type, "zoneId": id])
     }
 
