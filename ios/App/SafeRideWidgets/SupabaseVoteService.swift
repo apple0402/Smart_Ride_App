@@ -6,6 +6,9 @@ enum SupabaseVoteService {
 
     private static let baseURL = "https://jidpwflthppsltdayhoy.supabase.co"
     private static let anonKey = "sb_publishable_DiyfmExo-3Ycni7PBnNuSQ_zJH6IQRC"
+    // 라이딩 중 네트워크 상태가 불안정할 때 기본 60초 타임아웃까지 기다리면 잠금화면 카드가
+    // 응답 없이 멈춘 것처럼 보임(먹통) — LiveActivityIntent 실행 예산 내에 반드시 끝나도록 단축
+    private static let requestTimeout: TimeInterval = 5
 
     private struct ZoneVoteRow: Decodable {
         let safeVotes: Int?
@@ -42,6 +45,7 @@ enum SupabaseVoteService {
         guard let url = components.url else { return nil }
 
         var request = URLRequest(url: url)
+        request.timeoutInterval = requestTimeout
         applyAuthHeaders(&request, token: token)
 
         guard let (data, response) = try? await URLSession.shared.data(for: request),
@@ -60,6 +64,7 @@ enum SupabaseVoteService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
+        request.timeoutInterval = requestTimeout
         applyAuthHeaders(&request, token: token)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("return=minimal", forHTTPHeaderField: "Prefer")

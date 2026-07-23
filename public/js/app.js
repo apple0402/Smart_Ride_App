@@ -64,8 +64,11 @@ let enteredZones      = new Map(); // zoneId -> entryTimestamp (진입 확정된
 const EXIT_HYSTERESIS = 20;        // GPS 오차 보정 — 이탈은 alertDist + 20m 초과 시 확정
 let currentAlertZone  = null;
 let zonesPollInterval = null;
-let _alertTimeout     = null;
-let _voteTimer        = null; // 경고 배너 소멸 → 투표 팝업 표시 사이의 1.5초 지연 타이머
+let _alertTimeout     = null; // 경고 배너 자동 소멸 타이머 (구역 이탈/속도 초과 공용)
+const _voteTimers     = new Map(); // zoneId -> timeoutId — 구역별 이탈→투표 팝업 표시 시퀀스.
+                                    // 반드시 zoneId로 분리 관리할 것: 전역 변수 하나로 공유하면
+                                    // 다른 구역을 연이어 이탈할 때 앞선 구역의 타이머가 clearTimeout으로
+                                    // 취소되어 투표창이 아예 뜨지 않는(증발) 버그가 발생함.
 
 // ── 주소 캐시 (Nominatim 역지오코딩) ─────────────────────────────────────────
 const _addrCache = {};
@@ -392,19 +395,22 @@ function checkProximity(lat, lng) {
 
       // 마커 통과 3초 후 경고 배너 소멸 → 소멸 1.5초 후 투표 팝업 표시
       clearTimeout(_alertTimeout);
-      clearTimeout(_voteTimer);
-      _alertTimeout = setTimeout(() => {
-        Alert.dismiss();
-        _voteTimer = setTimeout(() => {
-          // 투표 팝업: 라이딩 중이면 alertsEnabled 설정과 무관하게 무조건 표시
-          if (Ride.active) {
-            const alreadyVoted = Auth.user
-              ? (Array.isArray(z.safeVoterIds) && z.safeVoterIds.includes(Auth.user.id))
-              : false;
-            if (!alreadyVoted) VotePopup.show(z);
-          }
-        }, 1500);
-      }, 3000);
+      _alertTimeout = setTimeout(() => Alert.dismiss(), 3000);
+
+      // 투표 팝업 예약은 구역별(zoneId) 타이머로 독립 관리 — 다른 구역의 진입/이탈이
+      // 이 구역의 예약을 취소하지 않도록 함
+      clearTimeout(_voteTimers.get(z.id));
+      const voteTimerId = setTimeout(() => {
+        _voteTimers.delete(z.id);
+        // 투표 팝업: 라이딩 중이면 alertsEnabled 설정과 무관하게 무조건 표시
+        if (Ride.active) {
+          const alreadyVoted = Auth.user
+            ? (Array.isArray(z.safeVoterIds) && z.safeVoterIds.includes(Auth.user.id))
+            : false;
+          if (!alreadyVoted) VotePopup.show(z);
+        }
+      }, 4500);
+      _voteTimers.set(z.id, voteTimerId);
     }
   });
 }
@@ -958,8 +964,9 @@ const Alert = {
     banner.classList.add('show');
 
     // 배너 소멸은 고정 타이머가 아닌 구역 이탈(통과) 시점 기준 — checkProximity()의 3초/1.5초 흐름이 담당
+    // 주의: 예약된 투표 팝업(_voteTimers)은 여기서 취소하지 않음 — 새 구역에 진입했다고
+    // 방금 지나온 구역의 투표창 예약까지 함께 사라지면 안 되기 때문 (증발 버그 원인이었음)
     clearTimeout(_alertTimeout);
-    clearTimeout(_voteTimer);
 
     if (Ride.active) Ride.passedZones.push(zone.id);
 

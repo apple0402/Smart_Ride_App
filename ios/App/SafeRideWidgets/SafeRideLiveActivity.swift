@@ -112,19 +112,22 @@ private struct VoteCard: View {
             HStack(spacing: 10) {
                 Button(intent: VoteDangerIntent(zoneId: zoneId)) {
                     Text("🚨 아직 위험해요")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.title3.weight(.bold))
                         .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
                 }
                 .tint(.red.opacity(0.85))
 
                 Button(intent: VoteSafeIntent(zoneId: zoneId, zoneType: state.zoneType)) {
                     Text("✅ 이젠 안전해요")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.title3.weight(.bold))
                         .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
                 }
                 .tint(.green.opacity(0.85))
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.large)
         }
         .padding(16)
     }
