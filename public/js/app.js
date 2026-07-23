@@ -1133,9 +1133,15 @@ const Report = {
     if (btn) { btn.disabled = true; btn.textContent = '제출 중...'; }
 
     try {
+      let address = '';
+      try {
+        const geoRes = await fetch(`/api/geocode?lat=${pos.lat}&lng=${pos.lng}`);
+        address = (await geoRes.json()).address || '';
+      } catch {}
+
       const result = await API.reportHazard({
         lat: pos.lat, lng: pos.lng,
-        type: this.selectedType, severity: this.selectedSev, desc
+        type: this.selectedType, severity: this.selectedSev, desc, address
       });
 
       if (result.action === 'created') {

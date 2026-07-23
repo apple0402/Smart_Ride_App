@@ -25,6 +25,9 @@ app.get('/api/health', (req, res) =>
   res.json({ status: 'ok', time: new Date(), backend: 'supabase' })
 );
 
+// ── 역지오코딩 프록시 (마커 등록 시 한글 지번 주소 조회) ────────────────────────
+app.use('/api/geocode', require('./routes/geocode'));
+
 // ── SPA fallback ──────────────────────────────────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

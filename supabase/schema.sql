@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS zones (
     title VARCHAR(255) NOT NULL,
     type VARCHAR(50) NOT NULL DEFAULT 'other',
     description TEXT DEFAULT '',
+    address TEXT DEFAULT '',
     severity VARCHAR(20) DEFAULT 'medium',
     report_count INTEGER DEFAULT 1,
     safe_votes INTEGER DEFAULT 0,
@@ -163,3 +164,4 @@ END $$;
 -- ALTER TABLE zones ADD COLUMN IF NOT EXISTS safe_votes INTEGER DEFAULT 0;
 -- ALTER TABLE zones ADD COLUMN IF NOT EXISTS safe_voter_ids TEXT[] DEFAULT '{}';
 -- ALTER TABLE zones ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active';
+-- ALTER TABLE zones ADD COLUMN IF NOT EXISTS address TEXT DEFAULT '';

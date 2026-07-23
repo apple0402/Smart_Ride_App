@@ -10,6 +10,7 @@ function mapZone(z) {
     title:        z.title,
     type:         z.type,
     desc:         z.description || '',
+    address:      z.address || '',
     severity:     z.severity,
     reportCount:  z.report_count,
     safeVotes:    z.safe_votes    || 0,
@@ -62,7 +63,7 @@ const API = {
   },
 
   // ══ 위험 신고 ═════════════════════════════════════════════════════════════
-  async reportHazard({ lat, lng, type, desc, severity }) {
+  async reportHazard({ lat, lng, type, desc, severity, address }) {
     const typeLabels = {
       pothole:      '포트홀 / 크랙',
       slippery:     '맨홀 / 미끄러움',
@@ -70,13 +71,14 @@ const API = {
       other:        '기타 위험'
     };
     const title = typeLabels[type] || '기타 위험';
+    const koreanDesc = `유저 제보: [${title}]${desc ? ' ' + desc : ''}`;
     const { data: { user } } = await sb.auth.getUser();
 
     await sb.from('reports').insert({
       id:          _uid('rpt'),
       user_id:     user?.id || null,
       lat, lng, type, title,
-      description: desc || '',
+      description: koreanDesc,
       severity:    severity || 'medium'
     });
 
@@ -92,7 +94,8 @@ const API = {
     const { data: newZone, error } = await sb.from('zones').insert({
       id:           _uid('zone'),
       lat, lng, title, type,
-      description:  desc || '',
+      description:  koreanDesc,
+      address:      address || '',
       severity:     severity || 'medium',
       report_count: 1,
       safe_votes:   0,
