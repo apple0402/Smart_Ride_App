@@ -61,7 +61,11 @@ const SEV_RADIUS  = { high: 80, medium: 60, low: 40 };
 let allZones          = [];
 let alertedZones      = new Set();
 let enteredZones      = new Map(); // zoneId -> entryTimestamp (진입 확정된 구역)
-const EXIT_HYSTERESIS = 20;        // GPS 오차 보정 — 이탈은 alertDist + 20m 초과 시 확정
+// GPS 수신 딜레이 보정 마진 — 자전거 주행 속도(20~30km/h)와 GPS 갱신 주기(1~3초) 특성상
+// 설정 거리(예: 50m) 그대로 판정하면 실제로는 10~20m 지점에서 뒤늦게 경고가 발현됨.
+// 진입 판정 기준을 alertDist + 이 마진만큼 앞당겨 55m~50m 구간에서 바로 경고가 뜨도록 보정.
+const GPS_DELAY_MARGIN = 5;
+const EXIT_HYSTERESIS  = 10;        // 이탈(투표창 트리거) 확정 — 진입 기준 + 10m 초과 시 즉시 확정
 let currentAlertZone  = null;
 let zonesPollInterval = null;
 let _alertTimeout     = null; // 경고 배너 자동 소멸 타이머 (구역 이탈/속도 초과 공용)
@@ -207,6 +211,40 @@ const NativeAudio = {
 };
 
 function playAlertSound() { NativeAudio.play('other'); }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AudioUnlock — iOS Safari 오디오 자동재생 차단 해제 (Autoplay Block 대응)
+// iOS WebKit은 유저의 첫 터치 인터랙션 전까지 오디오 재생을 차단함.
+// GPS 콜백처럼 사용자 제스처가 아닌 컨텍스트에서 호출되는 TTS/경고음이
+// 포그라운드에서도 무음 처리되는 문제 방지 — 첫 터치 시 엔진을 미리 깨워둔다.
+// ═══════════════════════════════════════════════════════════════════════════
+const AudioUnlock = {
+  _unlocked: false,
+
+  unlock() {
+    if (this._unlocked) return;
+    this._unlocked = true;
+
+    if (window.speechSynthesis) {
+      try {
+        const u = new SpeechSynthesisUtterance(' ');
+        u.volume = 0;
+        window.speechSynthesis.speak(u);
+      } catch (e) {}
+    }
+
+    try {
+      const Ctx = window.AudioContext || window['webkitAudioContext'];
+      if (Ctx) {
+        const ctx = new Ctx();
+        if (ctx.state === 'suspended') ctx.resume();
+      }
+    } catch (e) {}
+  }
+};
+
+document.addEventListener('touchstart', () => AudioUnlock.unlock(), { once: true, capture: true, passive: true });
+document.addEventListener('click',      () => AudioUnlock.unlock(), { once: true, capture: true, passive: true });
 
 // ── Service Worker 메시지 공통 발행 헬퍼 ────────────────────────────────────
 // [iOS 잠금화면 알림 누락 버그 수정 v2]
@@ -364,17 +402,17 @@ function circularMean(angles) {
 
 // ── 근접 감지 + 구역 진입/이탈 추적 (히스테리시스 적용) ─────────────────────
 // enteredZones Map 구조: zoneId → entryTimestamp
-// 진입 기준: alertDist 이하 / 이탈 확정: alertDist + EXIT_HYSTERESIS 초과
-// GPS 오차(20~40m)로 인한 경계 진동 시 이탈이 오발되지 않도록 20m 버퍼 적용
+// 진입 기준: entryDist(alertDist + GPS_DELAY_MARGIN) 이하 / 이탈 확정: entryDist + EXIT_HYSTERESIS 초과
 function checkProximity(lat, lng) {
   const settings  = Settings.get();
   const alertDist = settings.alertDistance;
-  const exitDist  = alertDist + EXIT_HYSTERESIS; // 이탈 확정 경계 (오차 보정)
+  const entryDist = alertDist + GPS_DELAY_MARGIN; // GPS 딜레이 보정 — 설정 거리보다 앞서 진입 판정
+  const exitDist  = entryDist + EXIT_HYSTERESIS;  // 이탈(투표창 트리거) 확정 경계
 
   allZones.forEach(z => {
     const d          = haversine(lat, lng, z.lat, z.lng);
     const wasEntered = enteredZones.has(z.id);
-    const isInside   = d <= alertDist;
+    const isInside   = d <= entryDist;
     const isOutside  = d > exitDist; // 히스테리시스 통과 시만 이탈 확정
 
     if (isInside && !wasEntered) {
@@ -383,8 +421,9 @@ function checkProximity(lat, lng) {
       if (!alertedZones.has(z.id)) {
         alertedZones.add(z.id);
         currentAlertZone = z;
-        // SW 잠금화면 알림: alertsEnabled·화면 상태 무관하게 항상 선발송
-        sendSwAlert(z);
+        // 포그라운드(화면 켜짐)일 때는 SW 푸시 배너를 띄우지 않음 — 화면 내부 alert-banner와
+        // 중복 노출되어 경고 메시지를 가리는 문제 방지. 백그라운드/화면 잠금 상태일 때만 발송.
+        if (document.hidden) sendSwAlert(z);
         // UI·오디오·TTS 경고는 alertsEnabled 설정 준수
         if (settings.alertsEnabled) Alert.show(z);
         setTimeout(() => alertedZones.delete(z.id), 60000);
@@ -393,12 +432,13 @@ function checkProximity(lat, lng) {
       // ── 이탈 확정 (히스테리시스 통과) ──
       enteredZones.delete(z.id);
 
-      // 마커 통과 3초 후 경고 배너 소멸 → 소멸 1.5초 후 투표 팝업 표시
+      // 마커 통과 3초 후 경고 배너 소멸
       clearTimeout(_alertTimeout);
       _alertTimeout = setTimeout(() => Alert.dismiss(), 3000);
 
       // 투표 팝업 예약은 구역별(zoneId) 타이머로 독립 관리 — 다른 구역의 진입/이탈이
       // 이 구역의 예약을 취소하지 않도록 함
+      // 이탈 확정 즉시(1초 이내) 투표창 노출 — 기존 4500ms 지연 제거
       clearTimeout(_voteTimers.get(z.id));
       const voteTimerId = setTimeout(() => {
         _voteTimers.delete(z.id);
@@ -409,7 +449,7 @@ function checkProximity(lat, lng) {
             : false;
           if (!alreadyVoted) VotePopup.show(z);
         }
-      }, 4500);
+      }, 800);
       _voteTimers.set(z.id, voteTimerId);
     }
   });
@@ -1010,9 +1050,9 @@ const VotePopup = {
     document.getElementById('vote-zone-name').textContent = zone.title || korean;
     document.getElementById('vote-popup').classList.add('open');
 
-    // 30초 후 자동 닫기
+    // 9초 후 자동 닫기 (터치 없어도 8~10초 내 자동 소멸)
     clearTimeout(this._timer);
-    this._timer = setTimeout(() => this.close(), 30000);
+    this._timer = setTimeout(() => this.close(), 9000);
   },
 
   async vote(type) {
