@@ -20,9 +20,14 @@ struct VoteSafeIntent: LiveActivityIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        // 네트워크가 느려도 잠금화면 카드가 무한정 멈춰있지 않도록 상한 시간을 두고,
-        // 그 안에서 못 끝나면 투표 기록은 포기하더라도 카드는 반드시 idle로 복귀시킨다.
-        await withTimeout(seconds: 6) {
+        // LiveActivityIntent는 익스텐션 프로세스의 짧은 실행 예산 안에서 끝나야 한다.
+        // 기존에는 withTaskGroup으로 네트워크 완료를 "대기 후 취소"했는데, TaskGroup은
+        // cancelAll() 이후에도 스코프를 벗어나기 전 자식 Task가 실제로 반환할 때까지
+        // 구조적으로 기다리므로, 네트워크가 느리면 그 대기 자체가 실행 예산을 넘겨
+        // 응답을 기록하기도 전에 프로세스가 통째로 종료되는(카드가 idle로 못 돌아오는)
+        // 원인이 됐다. → 투표 전송은 완전히 분리된(unstructured) Task로 흘려보내고,
+        // 카드 복귀는 그 네트워크 완료를 절대 기다리지 않고 즉시 실행한다.
+        Task.detached(priority: .userInitiated) {
             await SupabaseVoteService.voteSafe(zoneId: zoneId)
         }
         await LiveActivityEnder.returnToIdle()
@@ -57,16 +62,5 @@ enum LiveActivityEnder {
             mode: .idle, zoneId: "", zoneType: "", korean: "", icon: "", message: ""
         )
         await activity.update(.init(state: idleState, staleDate: nil))
-    }
-}
-
-// 지정 시간 내에 operation이 끝나지 않으면 포기하고 반환 — LiveActivityIntent가
-// 네트워크 지연 때문에 응답 없이 멈춘 것처럼 보이는 문제(먹통) 방지
-private func withTimeout(seconds: TimeInterval, operation: @escaping () async -> Void) async {
-    await withTaskGroup(of: Void.self) { group in
-        group.addTask { await operation() }
-        group.addTask { try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
-        await group.next()
-        group.cancelAll()
     }
 }

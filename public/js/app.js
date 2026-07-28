@@ -69,10 +69,6 @@ const EXIT_HYSTERESIS  = 10;        // 이탈(투표창 트리거) 확정 — �
 let currentAlertZone  = null;
 let zonesPollInterval = null;
 let _alertTimeout     = null; // 경고 배너 자동 소멸 타이머 (구역 이탈/속도 초과 공용)
-const _voteTimers     = new Map(); // zoneId -> timeoutId — 구역별 이탈→투표 팝업 표시 시퀀스.
-                                    // 반드시 zoneId로 분리 관리할 것: 전역 변수 하나로 공유하면
-                                    // 다른 구역을 연이어 이탈할 때 앞선 구역의 타이머가 clearTimeout으로
-                                    // 취소되어 투표창이 아예 뜨지 않는(증발) 버그가 발생함.
 
 // ── 주소 캐시 (Nominatim 역지오코딩) ─────────────────────────────────────────
 const _addrCache = {};
@@ -436,21 +432,14 @@ function checkProximity(lat, lng) {
       clearTimeout(_alertTimeout);
       _alertTimeout = setTimeout(() => Alert.dismiss(), 3000);
 
-      // 투표 팝업 예약은 구역별(zoneId) 타이머로 독립 관리 — 다른 구역의 진입/이탈이
-      // 이 구역의 예약을 취소하지 않도록 함
-      // 이탈 확정 즉시(1초 이내) 투표창 노출 — 기존 4500ms 지연 제거
-      clearTimeout(_voteTimers.get(z.id));
-      const voteTimerId = setTimeout(() => {
-        _voteTimers.delete(z.id);
-        // 투표 팝업: 라이딩 중이면 alertsEnabled 설정과 무관하게 무조건 표시
-        if (Ride.active) {
-          const alreadyVoted = Auth.user
-            ? (Array.isArray(z.safeVoterIds) && z.safeVoterIds.includes(Auth.user.id))
-            : false;
-          if (!alreadyVoted) VotePopup.show(z);
-        }
-      }, 800);
-      _voteTimers.set(z.id, voteTimerId);
+      // 10m 이탈 확정 즉시 투표 팝업을 지연 없이 다이렉트로 발현 (미세 타이머 체인 제거)
+      // 투표 팝업: 라이딩 중이면 alertsEnabled 설정과 무관하게 무조건 표시
+      if (Ride.active) {
+        const alreadyVoted = Auth.user
+          ? (Array.isArray(z.safeVoterIds) && z.safeVoterIds.includes(Auth.user.id))
+          : false;
+        if (!alreadyVoted) VotePopup.show(z);
+      }
     }
   });
 }
@@ -1003,9 +992,7 @@ const Alert = {
     banner.classList.remove('fade-out');
     banner.classList.add('show');
 
-    // 배너 소멸은 고정 타이머가 아닌 구역 이탈(통과) 시점 기준 — checkProximity()의 3초/1.5초 흐름이 담당
-    // 주의: 예약된 투표 팝업(_voteTimers)은 여기서 취소하지 않음 — 새 구역에 진입했다고
-    // 방금 지나온 구역의 투표창 예약까지 함께 사라지면 안 되기 때문 (증발 버그 원인이었음)
+    // 배너 소멸은 고정 타이머가 아닌 구역 이탈(통과) 시점 기준 — checkProximity()의 이탈 확정 흐름이 담당
     clearTimeout(_alertTimeout);
 
     if (Ride.active) Ride.passedZones.push(zone.id);
@@ -1013,8 +1000,14 @@ const Alert = {
     // 강화 진동 — 화면 꺼짐 상태에서도 navigator.vibrate 는 동작
     if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 800]);
 
-    // 오디오·TTS는 BackgroundSafetyPlugin(Swift)이 화면 잠금 여부 무관하게 직접 처리
-    // — 포그라운드/백그라운드 이중 재생 방지를 위해 JS 레이어에서는 오디오 호출 제거
+    // 네이티브(Capacitor iOS 빌드)에서는 BackgroundSafetyPlugin(Swift)이 화면 잠금 여부와
+    // 무관하게 오디오·TTS를 직접 처리하므로 여기서 또 재생하면 중복 재생이 된다.
+    // 반면 순수 웹 PWA(사파리 홈 화면 추가)는 그 네이티브 레이어가 아예 없어서, 여기서
+    // 재생하지 않으면 경고 배너만 뜨고 소리는 영원히 나지 않는다 — 그 경우에만 재생.
+    if (!window.Capacitor?.isNativePlatform?.()) {
+      playAlertSound();
+      TTS.speak(ttsMsg);
+    }
   },
 
   showSpeedWarning(speed, limit) {
@@ -1068,7 +1061,6 @@ const VotePopup = {
         if (result.cleared) {
           allZones = allZones.filter(z => z.id !== zone.id);
           alertedZones.delete(zone.id);
-          zonesInside.delete(zone.id);
           renderZones(allZones);
           ZoneList.render();
           updateNearbyCount();
