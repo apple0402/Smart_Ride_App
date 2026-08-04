@@ -61,14 +61,26 @@ const SEV_RADIUS  = { high: 80, medium: 60, low: 40 };
 let allZones          = [];
 let alertedZones      = new Set();
 let enteredZones      = new Map(); // zoneId -> 진입 후 관측된 최소 거리(minDist), 이탈(투표창) 판정 기준점
+// [5차 수정] 투표창 중복 차단 락 — zoneId -> 잠금 해제 가능 시각(timestamp).
+// 한 마커에서 투표창이 한 번 뜨면 등록되고, 해제되기 전까지 그 마커는 재진입 자체가 차단된다.
+let voteLockedZones   = new Map();
 // GPS 수신 딜레이 보정 마진 — 자전거 주행 속도(20~30km/h)와 GPS 갱신 주기(1~3초) 특성상
 // 설정 거리(예: 50m) 그대로 판정하면 실제로는 10~20m 지점에서 뒤늦게 경고가 발현됨.
-// 진입 판정 기준을 alertDist + 이 마진만큼 앞당겨 기본 50m 설정 기준 65m 지점에서 바로 경고가 뜨도록 보정.
-const GPS_DELAY_MARGIN = 15;
+// [5차 수정] 15 → 30. 기본 50m 설정 기준 진입 판정이 80m 지점에서 이뤄지며,
+// 라이더 체감으로는 마커 30~50m 전방에서 배너·음성이 발현된다.
+// ※ 이 값을 키우면 마커 통과 후 재진입 사이클이 늘어나므로 VOTE_LOCK_MS 락이 반드시 함께 동작해야 한다.
+const GPS_DELAY_MARGIN = 30;
 // 이탈(투표창) 확정 마진 — 진입 기준(entryDist)이 아닌, 진입 후 가장 가까웠던 지점(minDist) 대비
 // 이만큼 다시 멀어지면 즉시 확정. entryDist 기준으로 재던 이전 방식은 마커를 지나 50~100m나
 // 더 가야 이탈이 잡히는 원인이었음 — minDist 기준으로 바꿔 마커 통과 직후 10m대에서 바로 확정되게 함.
 const VOTE_EXIT_MARGIN = 10;
+// [5차 수정] 투표창 중복 스팸 박멸용 상수 —— 락 해제는 아래 두 조건을 "모두" 만족해야 한다.
+//   ① 투표창이 뜬 뒤 VOTE_LOCK_MS 경과
+//   ② 현재 거리가 entryDist + ZONE_REARM_MARGIN 밖 (= 실제로 그 구역을 벗어남)
+// 시간 조건만으로는 불충분한 이유: 25km/h에서 9초는 약 62m 이동이라 80m 진입 반경을
+// 벗어나지 못한다. 9초 뒤 재진입 → 투표창 재발현이 그대로 재현된다. 그래서 AND 조건이다.
+const VOTE_LOCK_MS      = 9000;
+const ZONE_REARM_MARGIN = 30;
 let currentAlertZone  = null;
 let zonesPollInterval = null;
 let _alertTimeout     = null; // 경고 배너 자동 소멸 타이머 (구역 이탈/속도 초과 공용)
@@ -99,6 +111,24 @@ async function getAddress(lat, lng) {
   }
 }
 
+// ── [5차 수정] 구역 표시명 — 레거시 마커 하위 호환 ──────────────────────────
+// ZONE_KOREAN은 4종(pothole/slippery/construction/other)만 갖고 있는데, 과거 데이터에는
+// ZONE_ICONS에만 존재하는 타입(wet_road, sharp_turn, blind_spot, steep, debris, general)이
+// 남아 있다. 기존 `ZONE_KOREAN[z.type] || z.title` 방식은 둘 다 없으면 undefined를 그대로
+// 렌더해 "방금 지나온 [undefined] 안전해졌나요?"가 찍혔다.
+// 이 헬퍼는 어떤 입력에도 절대 undefined를 반환하지 않는다.
+const ZONE_KOREAN_FALLBACK = {
+  wet_road: '젖은 노면', sharp_turn: '급커브', blind_spot: '사각지대',
+  steep: '급경사', debris: '노면 장애물', general: '위험 구역'
+};
+function zoneLabel(zone) {
+  if (!zone) return '위험 구역';
+  return ZONE_KOREAN[zone.type]
+      || (zone.title && String(zone.title).trim())
+      || ZONE_KOREAN_FALLBACK[zone.type]
+      || '위험 구역';
+}
+
 // ── HTML 이스케이프 (XSS 방지) ───────────────────────────────────────────────
 function escHtml(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -126,8 +156,10 @@ const NativeTTS = {
   },
 
   getZoneMessage(zone) {
+    // [5차 수정] 레거시 마커(desc/title 없음, 미등록 type)에서도 항상 유효한 한글 문장 반환
+    if (!zone) return this.MESSAGES.other;
     if (zone.type === 'other') return zone.desc || zone.title || this.MESSAGES.other;
-    return this.MESSAGES[zone.type] || `${ZONE_KOREAN[zone.type] || zone.title} 주의하세요`;
+    return this.MESSAGES[zone.type] || `${zoneLabel(zone)} 주의하세요`;
   },
 
   async speak(text, startDelay = 0) {
@@ -142,11 +174,16 @@ const NativeTTS = {
       // 웹 폴백 — 잠금화면에서는 iOS가 차단하므로 화면 켜짐 상태에서만 실행
       if (document.hidden && Platform.isIOS) return;
       if (!window.speechSynthesis) return;
+      // [5차 수정] 오디오 세션이 잠겨 있으면(터치 전) 발화해도 무음이므로 여기서 한 번 더 시도.
+      // 이미 언락됐으면 no-op이다.
+      AudioUnlock.unlock();
+      AudioUnlock.resume();
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'ko-KR'; u.rate = 0.9; u.volume = 1.0;
-      const kor = window.speechSynthesis.getVoices().find(v => v.lang.startsWith('ko'));
-      if (kor) u.voice = kor;
+      // 언락 시점에 캐싱해 둔 보이스 사용 — iOS는 발화 시점 getVoices()가 빈 배열일 수 있다
+      if (!AudioUnlock.koVoice) AudioUnlock.refreshVoices();
+      if (AudioUnlock.koVoice) u.voice = AudioUnlock.koVoice;
       window.speechSynthesis.speak(u);
     };
     if (startDelay > 0) setTimeout(doSpeak, startDelay * 1000);
@@ -217,33 +254,76 @@ function playAlertSound() { NativeAudio.play('other'); }
 // GPS 콜백처럼 사용자 제스처가 아닌 컨텍스트에서 호출되는 TTS/경고음이
 // 포그라운드에서도 무음 처리되는 문제 방지 — 첫 터치 시 엔진을 미리 깨워둔다.
 // ═══════════════════════════════════════════════════════════════════════════
+// [5차 수정] 4차의 언락은 (a) 무음 HTML5 오디오 재생이 없었고 (b) getVoices() 프라이밍이
+// 없었으며 (c) { once: true }라 첫 터치에서 실패하면 영구히 무음으로 남았다. 셋 다 보강.
 const AudioUnlock = {
   _unlocked: false,
+  _ctx: null,
+  koVoice: null,   // 한국어 보이스 캐시 — 발화 시점에 getVoices()를 다시 뒤지지 않도록
+
+  // 44바이트 헤더만 있는 무음 WAV (data URI) — 외부 파일 의존 없이 오디오 파이프라인만 깨운다
+  _SILENT_WAV: 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=',
 
   unlock() {
     if (this._unlocked) return;
-    this._unlocked = true;
 
+    let ok = false;
+
+    // ① 무음 HTML5 오디오 강제 재생 — iOS WebKit의 오디오 세션을 유저 제스처 컨텍스트에서 개방
+    try {
+      const a = new Audio(this._SILENT_WAV);
+      a.volume = 0;
+      const p = a.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+      ok = true;
+    } catch (e) {}
+
+    // ② speechSynthesis 프라이밍 — iOS는 첫 getVoices()가 빈 배열을 반환하고 비동기로 채워진다.
+    //    프라이밍 없이 발화 시점에 조회하면 한국어 보이스를 못 찾아 무음/기본보이스가 된다.
     if (window.speechSynthesis) {
       try {
+        this.refreshVoices();
+        window.speechSynthesis.addEventListener?.('voiceschanged', () => this.refreshVoices());
         const u = new SpeechSynthesisUtterance(' ');
         u.volume = 0;
+        u.lang   = 'ko-KR';
         window.speechSynthesis.speak(u);
+        ok = true;
       } catch (e) {}
     }
 
+    // ③ AudioContext 개방 (경고음 재생 경로)
     try {
       const Ctx = window.AudioContext || window['webkitAudioContext'];
       if (Ctx) {
-        const ctx = new Ctx();
-        if (ctx.state === 'suspended') ctx.resume();
+        this._ctx = this._ctx || new Ctx();
+        if (this._ctx.state === 'suspended') this._ctx.resume();
+        ok = true;
       }
+    } catch (e) {}
+
+    // 하나라도 성공해야 확정 — 실패하면 다음 터치에서 다시 시도한다(영구 무음 방지)
+    if (ok) this._unlocked = true;
+  },
+
+  refreshVoices() {
+    if (!window.speechSynthesis) return;
+    const voices = window.speechSynthesis.getVoices() || [];
+    this.koVoice = voices.find(v => v.lang && v.lang.startsWith('ko')) || null;
+  },
+
+  // 백그라운드 복귀 시 iOS가 오디오 세션을 suspend 상태로 되돌리는 경우가 있어 재개시킨다
+  resume() {
+    try {
+      if (this._ctx && this._ctx.state === 'suspended') this._ctx.resume();
     } catch (e) {}
   }
 };
 
-document.addEventListener('touchstart', () => AudioUnlock.unlock(), { once: true, capture: true, passive: true });
-document.addEventListener('click',      () => AudioUnlock.unlock(), { once: true, capture: true, passive: true });
+// once를 쓰지 않는다 — 언락이 실패하면 다음 터치에서 재시도해야 하기 때문
+document.addEventListener('touchstart', () => AudioUnlock.unlock(), { capture: true, passive: true });
+document.addEventListener('click',      () => AudioUnlock.unlock(), { capture: true, passive: true });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) AudioUnlock.resume(); });
 
 // ── Service Worker 메시지 공통 발행 헬퍼 ────────────────────────────────────
 // [iOS 잠금화면 알림 누락 버그 수정 v2]
@@ -271,7 +351,7 @@ async function sendSwAlert(zone) {
   return sendSwMessage({
     type:     'DANGER_ZONE_ALERT',
     title:    '⚠️ Safe Ride 위험 구역 감지!',
-    body:     `${ZONE_ICONS[zone.type]||'⚠️'} ${ZONE_KOREAN[zone.type]||zone.title} 50m 전입니다. 서행하세요!`,
+    body:     `${ZONE_ICONS[zone.type]||'⚠️'} ${zoneLabel(zone)} 전방입니다. 서행하세요!`,
     icon:     '/icons/icon-192.png',
     zoneType: zone.type
   });
@@ -337,7 +417,7 @@ function renderZones(zones) {
     const popupDiv = document.createElement('div');
     popupDiv.style.cssText = 'min-width:200px;max-width:260px;font-size:13px;line-height:1.6';
     popupDiv.innerHTML = `
-      <div style="font-weight:800;font-size:15px;margin-bottom:6px">${ZONE_ICONS[z.type]||'⚠️'} ${ZONE_KOREAN[z.type] || z.title}</div>
+      <div style="font-weight:800;font-size:15px;margin-bottom:6px">${ZONE_ICONS[z.type]||'⚠️'} ${escHtml(zoneLabel(z))}</div>
       <div style="color:#94a3b8;margin-bottom:3px;font-size:11px">📍 <span id="popup-addr-${z.id}">주소 조회 중…</span></div>
       <div style="color:#64748b;font-size:11px;margin-bottom:3px">📅 ${formatDate(z.createdAt)}</div>
       <div style="color:#86efac;font-size:11px;margin-bottom:6px">✅ 이젠 안전해요 (${z.safeVotes||0} / 3명 완료)</div>
@@ -411,6 +491,17 @@ function checkProximity(lat, lng) {
 
   allZones.forEach(z => {
     const d          = haversine(lat, lng, z.lat, z.lng);
+
+    // ── [5차 수정] 투표창 중복 스팸 차단 락 ──────────────────────────────────
+    // 4회 스팸의 실제 원인은 "이탈 조건이 연속 True"가 아니다. 이탈 확정 시
+    // enteredZones.delete()가 실행되므로 그 분기는 재발화가 불가능하다.
+    // 진짜 원인은 재진입 루프다 — 삭제 직후 라이더가 아직 진입 반경(80m) 안에 있어서
+    // 아래 첫 분기(isInside && !wasEntered)가 다시 걸리고, 10m 더 이격되면 또 이탈 확정.
+    // 반경을 벗어나기까지 이 사이클이 3~4회 반복된다.
+    // → 락이 걸린 구역은 진입 판정 자체를 건너뛴다. 팝업만 막으면 alertedZones와
+    //   enteredZones가 계속 재오염되므로, 반드시 진입 단계에서 차단해야 한다.
+    if (isZoneVoteLocked(z.id, d, entryDist)) return;
+
     const wasEntered = enteredZones.has(z.id);
     const isInside   = d <= entryDist;
 
@@ -446,11 +537,36 @@ function checkProximity(lat, lng) {
           const alreadyVoted = Auth.user
             ? (Array.isArray(z.safeVoterIds) && z.safeVoterIds.includes(Auth.user.id))
             : false;
+          // [5차 수정] 이 구역은 이번 통과에서 소진(First Win) — 표시 여부와 무관하게 잠근다.
+          // 이미 투표한 구역도 함께 잠가야 재진입 시 알림·배너가 반복되지 않는다.
+          lockZoneVote(z.id);
           if (!alreadyVoted) VotePopup.show(z);
         }
       }
     }
   });
+}
+
+// ── [5차 수정] 구역별 투표 락 헬퍼 ──────────────────────────────────────────
+// 락 등록: 투표창이 뜬(또는 뜰 자격을 소진한) 시점
+function lockZoneVote(zoneId) {
+  voteLockedZones.set(zoneId, Date.now() + VOTE_LOCK_MS);
+}
+
+// 락 조회 + 자동 해제. 해제 조건은 두 가지를 "모두" 만족해야 한다.
+//   ① VOTE_LOCK_MS(9초) 경과  ② 진입 반경 + ZONE_REARM_MARGIN 밖으로 실제 이격
+// 둘 중 하나라도 미충족이면 잠금 유지 → 호출부는 해당 구역을 통째로 건너뛴다.
+function isZoneVoteLocked(zoneId, distance, entryDist) {
+  const unlockAt = voteLockedZones.get(zoneId);
+  if (unlockAt === undefined) return false;
+
+  const timeElapsed = Date.now() >= unlockAt;
+  const movedAway   = distance > entryDist + ZONE_REARM_MARGIN;
+  if (timeElapsed && movedAway) {
+    voteLockedZones.delete(zoneId); // 재무장 — 다음 방문 때 정상 동작
+    return false;
+  }
+  return true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -853,7 +969,7 @@ const Ride = {
     this.elapsed = 0; this.distance = 0; this.speedHistory = []; this.maxSpeed = 0;
     this.passedZones = []; this.routeCoords = [];
     this._startTime = Date.now();
-    alertedZones.clear(); enteredZones.clear();
+    alertedZones.clear(); enteredZones.clear(); voteLockedZones.clear();
 
     const btn = document.getElementById('ride-btn');
     btn.textContent = '라이딩 종료';
@@ -994,7 +1110,7 @@ const Alert = {
     if (!Settings.get().alertsEnabled) return;
 
     const ttsMsg = TTS.getZoneMessage(zone);
-    document.getElementById('alert-title').textContent = `${ZONE_ICONS[zone.type]||'⚠️'} ${ZONE_KOREAN[zone.type] || zone.title}`;
+    document.getElementById('alert-title').textContent = `${ZONE_ICONS[zone.type]||'⚠️'} ${zoneLabel(zone)}`;
     document.getElementById('alert-desc').textContent  = ttsMsg;
 
     const banner = document.getElementById('alert-banner');
@@ -1046,15 +1162,28 @@ const VotePopup = {
   _timer: null,
 
   show(zone) {
+    if (!zone) return;
     this._zone = zone;
-    const korean = ZONE_KOREAN[zone.type] || zone.title;
-    document.getElementById('vote-question').textContent = `방금 지나온 [${korean}] 안전해졌나요?`;
-    document.getElementById('vote-zone-name').textContent = zone.title || korean;
-    document.getElementById('vote-popup').classList.add('open');
 
-    // 9초 후 자동 닫기 (터치 없어도 8~10초 내 자동 소멸)
-    clearTimeout(this._timer);
-    this._timer = setTimeout(() => this.close(), 9000);
+    // [5차 수정] 레거시 마커 하위 호환 — 텍스트 렌더가 어떤 이유로 실패하더라도
+    // finally의 classList.add('open')은 반드시 실행되어 투표창 자체는 100% 열린다.
+    // "과거 마커든 새 마커든 동일하게 작동"을 구조적으로 보장하는 지점.
+    try {
+      const korean = zoneLabel(zone);
+      // address는 신규 컬럼 — 과거 행에는 없다. 있으면 부제로 쓰고 없으면 구역명으로 폴백.
+      const subtitle = (zone.address && String(zone.address).trim())
+                    || (zone.title   && String(zone.title).trim())
+                    || korean;
+      document.getElementById('vote-question').textContent  = `방금 지나온 [${korean}] 안전해졌나요?`;
+      document.getElementById('vote-zone-name').textContent = subtitle;
+    } catch (e) {
+      // 렌더 실패는 투표 자체를 막지 않는다 — 기본 문구 그대로 두고 팝업은 연다
+    } finally {
+      document.getElementById('vote-popup').classList.add('open');
+      // 9초 후 자동 닫기 (터치 없어도 8~10초 내 자동 소멸)
+      clearTimeout(this._timer);
+      this._timer = setTimeout(() => this.close(), 9000);
+    }
   },
 
   async vote(type) {
@@ -1133,8 +1262,8 @@ const ZoneList = {
       return `<div class="flex items-start gap-3 p-3 rounded-xl border ${c} cursor-pointer" onclick="focusZone(${z.lat},${z.lng})">
         <span class="text-2xl">${ZONE_ICONS[z.type]||'⚠️'}</span>
         <div class="flex-1">
-          <div class="font-semibold text-sm text-white">${escHtml(ZONE_KOREAN[z.type] || z.title)}</div>
-          <div class="text-xs text-slate-400 mt-0.5">${escHtml(z.desc)}</div>
+          <div class="font-semibold text-sm text-white">${escHtml(zoneLabel(z))}</div>
+          <div class="text-xs text-slate-400 mt-0.5">${escHtml(z.desc || z.address || '')}</div>
           <div class="text-xs text-slate-500 mt-0.5">신고 ${z.reportCount||1}건 · 안전투표 ${z.safeVotes||0}/3</div>
         </div>
         <span class="text-xs font-bold px-2 py-0.5 rounded-full border ${c} flex-shrink-0">${escHtml(sevLabel)}</span>
@@ -1653,11 +1782,47 @@ map.on('movestart', e => {
   map._locBtnMove = false;
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [5차 추가] PwaNotice — 웹 브라우저(PWA) 모드 잠금화면 제약 안내
+// iOS Safari/PWA는 화면 잠금 시 JS 타이머와 geolocation 콜백이 정지한다(애플 정책, 우회 불가).
+// 고칠 수 없는 제약이므로 유저가 "고장"으로 오해하지 않도록 안내한다.
+// 네이티브(Capacitor) 빌드에서는 BackgroundSafetyPlugin이 처리하므로 노출하지 않는다.
+// ═══════════════════════════════════════════════════════════════════════════
+const PwaNotice = {
+  _KEY: 'saferide_pwa_notice_dismissed',
+
+  init() {
+    // 네이티브 빌드면 안내 자체가 불필요 — DOM에서 제거하고 종료
+    if (window.Capacitor?.isNativePlatform?.()) return;
+
+    const root = document.getElementById('pwa-notice');
+    if (!root) return;
+    root.classList.remove('hidden');
+
+    // 최초 실행 시 1회 자동 노출, "다시 안 보기" 이후에는 배지만 남긴다
+    let dismissed = false;
+    try { dismissed = localStorage.getItem(this._KEY) === '1'; } catch (e) {}
+    if (!dismissed) {
+      setTimeout(() => document.getElementById('pwa-notice-card')?.classList.remove('hidden'), 1200);
+    }
+  },
+
+  toggle() {
+    document.getElementById('pwa-notice-card')?.classList.toggle('hidden');
+  },
+
+  dismiss() {
+    document.getElementById('pwa-notice-card')?.classList.add('hidden');
+    try { localStorage.setItem(this._KEY, '1'); } catch (e) {}
+  }
+};
+
 loadZones();
 Settings.load();
 Auth.init();
 LocBtn.init();
 GpsDebug.init();
+PwaNotice.init();
 GPS.startTracking();
 
 // iOS 네이티브 GPS 브릿지 — 화면 잠금/백그라운드 시(document.hidden) navigator.geolocation이 멈추므로
@@ -1683,11 +1848,15 @@ if (Platform.isIOS && window.CapBridge?.BackgroundSafety) {
     const { zoneId } = data;
     // 이미 JS checkProximity가 처리한 구역(enteredZones에서 제거된)은 중복 표시 방지
     if (enteredZones.has(zoneId)) return;
+    // [5차 수정] JS 경로와 락을 공유 — 같은 마커에 대해 JS/네이티브가 이중 발현하지 않도록 차단.
+    // 여기서는 거리를 알 수 없으므로 시간 조건만으로 판정한다(락 등록 후 9초 내 재발화 차단).
+    if (voteLockedZones.has(zoneId)) return;
     const zone = allZones.find(z => z.id === zoneId);
     if (!zone) return;
     const alreadyVoted = Auth.user
       ? (Array.isArray(zone.safeVoterIds) && zone.safeVoterIds.includes(Auth.user.id))
       : false;
+    lockZoneVote(zoneId);
     if (!alreadyVoted) VotePopup.show(zone);
   });
 

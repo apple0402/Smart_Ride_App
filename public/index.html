@@ -24,6 +24,16 @@
   <script src="/js/capacitor-bridge.js"></script>
 
   <style>
+    /* [5차 수정] 앱 실행 시 상단 문구 번쩍임(FOUC) 제거.
+       cdn.tailwindcss.com은 빌드 산출물이 아니라 런타임 JIT 스크립트라,
+       스크립트가 스타일을 주입하기 전까지 .hidden 클래스에는 아무 스타일도 없다.
+       그 사이 #verification-modal(fixed inset-0 = 전체 화면)과 #form-signup이
+       완전히 보이는 상태로 렌더되어 "이상한 문구가 번쩍"이는 현상이 발생한다.
+       인라인 CSS는 파서가 즉시 적용하므로 CDN 로딩을 기다리지 않는다.
+       !important가 안전한 이유: 앱은 요소를 보일 때 classList.remove('hidden')으로
+       클래스를 제거하지 추가하지 않는다(VerificationModal.show, Auth.switchTab). */
+    .hidden { display: none !important; }
+
     * { box-sizing: border-box; }
     body { margin:0; font-family:'Segoe UI',system-ui,sans-serif; background:#0f172a; color:#f1f5f9; overflow:hidden; }
     #map { width:100%; height:100vh; z-index:1; }
@@ -65,8 +75,10 @@
     #toast.show { opacity:1; transform:translateY(0); }
 
     /* 투표 팝업 슬라이드업 */
-    #vote-popup { position:fixed; bottom:-100%; left:0; right:0; z-index:300; background:#0f172a; border-top:2px solid #f97316; border-radius:28px 28px 0 0; padding:28px 20px 44px; transition:bottom 0.45s cubic-bezier(0.22,1,0.36,1); box-shadow:0 -10px 40px rgba(0,0,0,0.7); }
-    #vote-popup.open { bottom:0; }
+    /* [5차 수정] .open 전에는 visibility로 완전히 차단 — 슬라이드 트랜지션 도중
+       텍스트가 갱신되며 스치듯 보이는 미세 깜빡임 방지. 페이드인으로 부드럽게 노출. */
+    #vote-popup { position:fixed; bottom:-100%; left:0; right:0; z-index:300; background:#0f172a; border-top:2px solid #f97316; border-radius:28px 28px 0 0; padding:28px 20px 44px; visibility:hidden; opacity:0; transition:bottom 0.45s cubic-bezier(0.22,1,0.36,1), opacity 0.25s ease-out, visibility 0s linear 0.45s; box-shadow:0 -10px 40px rgba(0,0,0,0.7); }
+    #vote-popup.open { bottom:0; visibility:visible; opacity:1; transition:bottom 0.45s cubic-bezier(0.22,1,0.36,1), opacity 0.25s ease-out, visibility 0s; }
 
     /* 필터 토글 버튼 */
     .filter-btn { border-radius:20px; padding:5px 14px; font-size:12px; font-weight:600; cursor:pointer; border:1px solid; transition:all 0.15s; }
@@ -468,6 +480,29 @@
     <button onclick="VotePopup.vote('safe')"
       class="py-10 rounded-2xl bg-green-500/20 border-4 border-green-500/60 text-green-300 font-black text-2xl active:scale-95 transition-all hover:bg-green-500/30">
       <span class="text-4xl">✅</span><br><span class="text-xl mt-2 block">이젠 안전해요</span>
+    </button>
+  </div>
+</div>
+
+<!-- ── [5차 추가] PWA 잠금화면 제약 안내 (네이티브 빌드에서는 JS가 자동 제거) ──── -->
+<div id="pwa-notice" class="hidden">
+  <button id="pwa-notice-badge" onclick="PwaNotice.toggle()"
+    style="position:fixed;top:14px;right:14px;z-index:997;background:rgba(249,115,22,0.92);color:#fff;border:none;border-radius:14px;padding:6px 11px;font-size:11px;font-weight:700;box-shadow:0 2px 10px rgba(0,0,0,0.5);cursor:pointer;">
+    ⚠️ 웹 모드
+  </button>
+  <div id="pwa-notice-card" class="hidden"
+    style="position:fixed;top:52px;right:14px;left:14px;max-width:330px;margin-left:auto;z-index:997;background:#1e293b;border:1px solid rgba(249,115,22,0.55);border-radius:14px;padding:14px 16px;box-shadow:0 8px 28px rgba(0,0,0,0.6);">
+    <div style="font-size:13px;font-weight:800;color:#fdba74;margin-bottom:6px">[알림] 웹 브라우저 모드로 실행 중</div>
+    <div style="font-size:12px;color:#cbd5e1;line-height:1.65">
+      사파리·크롬 바로가기(PWA)는 애플 정책상 <b style="color:#fca5a5">화면이 잠기면 GPS와 자바스크립트가 정지</b>합니다.
+      잠금화면 배너 및 음성 추적을 완벽하게 이용하시려면 맥북으로 빌드된 네이티브 앱 버전을 실행해 주세요.
+    </div>
+    <div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-top:8px">
+      화면이 켜져 있는 동안에는 경고·음성이 정상 동작합니다.
+    </div>
+    <button onclick="PwaNotice.dismiss()"
+      style="margin-top:11px;width:100%;padding:8px;background:#334155;color:#cbd5e1;border:none;border-radius:9px;font-size:12px;font-weight:600;cursor:pointer;">
+      확인했습니다 (다시 안 보기)
     </button>
   </div>
 </div>

@@ -26,10 +26,17 @@ public class BackgroundSafetyPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationMana
     private var enteredZones   = [String: Double]()  // 진입 중인 구역 id → 진입 후 관측된 최소 거리(minDist)
     // GPS 딜레이 보정 마진 — JS(app.js)의 GPS_DELAY_MARGIN과 동일한 의도: 설정 거리 그대로 판정하면
     // 주행 속도상 실제로는 수 미터 늦게 잡히므로, 진입 판정을 앞당겨 체감상 정확한 지점에서 경고되게 함
-    private let gpsDelayMargin: Double = 15
+    // [5차 수정] 15 → 30. JS의 GPS_DELAY_MARGIN과 반드시 같은 값이어야 한다
+    // (어긋나면 포그라운드/백그라운드 경고 발현 지점이 달라진다). 기본 50m 기준 진입 판정 80m.
+    private let gpsDelayMargin: Double = 30
     // 이탈(투표창) 확정 마진 — 절대 거리가 아닌 "진입 후 가장 가까웠던 지점(minDist)" 대비 재이격 거리.
     // JS의 VOTE_EXIT_MARGIN과 동일 — 마커를 지나친 직후 10m대에서 바로 이탈이 확정되게 함
     private let voteExitMargin: Double = 10
+    // [5차 수정] 투표 카드 중복 발현 차단 락 — JS의 voteLockedZones와 동일 로직.
+    // zoneId → 잠금 해제 가능 시각. 해제는 ①9초 경과 ②진입 반경+30m 밖 이격을 모두 만족해야 한다.
+    private var voteLockedZones = [String: Date]()
+    private let voteLockDuration: TimeInterval = 9
+    private let zoneRearmMargin: Double = 30
     private var audioPlayers: [String: AVAudioPlayer] = [:]
     private var synthesizer = AVSpeechSynthesizer()
     private var isTracking = false
@@ -96,6 +103,7 @@ public class BackgroundSafetyPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationMana
         }
         alertedZones.removeAll()
         enteredZones.removeAll()
+        voteLockedZones.removeAll()  // [5차 수정] 새 라이딩 세션은 모든 구역을 재무장 상태로 시작
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -190,12 +198,19 @@ public class BackgroundSafetyPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationMana
             let entryDist = baseDist + gpsDelayMargin  // GPS 딜레이 보정 — 설정 거리보다 앞서 진입 판정
             let distance  = location.distance(from: CLLocation(latitude: lat, longitude: lng))
 
+            // [5차 수정] 투표 카드 중복 발현 차단 — JS checkProximity와 동일한 재진입 루프가
+            // 여기에도 존재한다(이탈 확정 → enteredZones 제거 → 아직 반경 안이라 재진입 → 반복).
+            // 락이 걸린 구역은 진입 판정 자체를 건너뛴다.
+            if isZoneVoteLocked(id: id, distance: distance, entryDist: entryDist) { continue }
+
             if let minDist = enteredZones[id] {
                 // ── 진입 중: 정점(minDist) 갱신 또는 재이격 마진 통과 시 이탈 확정 ──
                 if distance < minDist {
                     enteredZones[id] = distance
                 } else if distance - minDist >= voteExitMargin {
                     enteredZones.removeValue(forKey: id)
+                    // [5차 수정] 이번 통과에서 소진(First Win) — 잠근 뒤 이탈 시퀀스 실행
+                    voteLockedZones[id] = Date().addingTimeInterval(voteLockDuration)
                     triggerZoneExit(type: type, id: id)
                 }
             } else if distance <= entryDist {
@@ -204,6 +219,21 @@ public class BackgroundSafetyPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationMana
                 triggerZoneEntry(type: type, distance: distance, id: id)
             }
         }
+    }
+
+    // [5차 수정] 락 조회 + 자동 해제 — JS의 isZoneVoteLocked()와 동일 규칙.
+    // 해제하려면 ①9초 경과 ②진입 반경 + 30m 밖 이격을 "모두" 만족해야 한다.
+    // 9초 단독으로는 25km/h 기준 약 62m만 이동해 80m 반경을 벗어나지 못하므로 AND 조건이 필요하다.
+    private func isZoneVoteLocked(id: String, distance: Double, entryDist: Double) -> Bool {
+        guard let unlockAt = voteLockedZones[id] else { return false }
+
+        let timeElapsed = Date() >= unlockAt
+        let movedAway   = distance > entryDist + zoneRearmMargin
+        if timeElapsed && movedAway {
+            voteLockedZones.removeValue(forKey: id)  // 재무장 — 다음 방문 때 정상 동작
+            return false
+        }
+        return true
     }
 
     // MARK: - Zone Entry
