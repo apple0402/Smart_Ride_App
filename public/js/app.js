@@ -60,12 +60,15 @@ const SEV_RADIUS  = { high: 80, medium: 60, low: 40 };
 
 let allZones          = [];
 let alertedZones      = new Set();
-let enteredZones      = new Map(); // zoneId -> entryTimestamp (진입 확정된 구역)
+let enteredZones      = new Map(); // zoneId -> 진입 후 관측된 최소 거리(minDist), 이탈(투표창) 판정 기준점
 // GPS 수신 딜레이 보정 마진 — 자전거 주행 속도(20~30km/h)와 GPS 갱신 주기(1~3초) 특성상
 // 설정 거리(예: 50m) 그대로 판정하면 실제로는 10~20m 지점에서 뒤늦게 경고가 발현됨.
-// 진입 판정 기준을 alertDist + 이 마진만큼 앞당겨 55m~50m 구간에서 바로 경고가 뜨도록 보정.
-const GPS_DELAY_MARGIN = 5;
-const EXIT_HYSTERESIS  = 10;        // 이탈(투표창 트리거) 확정 — 진입 기준 + 10m 초과 시 즉시 확정
+// 진입 판정 기준을 alertDist + 이 마진만큼 앞당겨 기본 50m 설정 기준 65m 지점에서 바로 경고가 뜨도록 보정.
+const GPS_DELAY_MARGIN = 15;
+// 이탈(투표창) 확정 마진 — 진입 기준(entryDist)이 아닌, 진입 후 가장 가까웠던 지점(minDist) 대비
+// 이만큼 다시 멀어지면 즉시 확정. entryDist 기준으로 재던 이전 방식은 마커를 지나 50~100m나
+// 더 가야 이탈이 잡히는 원인이었음 — minDist 기준으로 바꿔 마커 통과 직후 10m대에서 바로 확정되게 함.
+const VOTE_EXIT_MARGIN = 10;
 let currentAlertZone  = null;
 let zonesPollInterval = null;
 let _alertTimeout     = null; // 경고 배너 자동 소멸 타이머 (구역 이탈/속도 초과 공용)
@@ -396,24 +399,24 @@ function circularMean(angles) {
   return (Math.atan2(sinSum, cosSum) * 180 / Math.PI + 360) % 360;
 }
 
-// ── 근접 감지 + 구역 진입/이탈 추적 (히스테리시스 적용) ─────────────────────
-// enteredZones Map 구조: zoneId → entryTimestamp
-// 진입 기준: entryDist(alertDist + GPS_DELAY_MARGIN) 이하 / 이탈 확정: entryDist + EXIT_HYSTERESIS 초과
+// ── 근접 감지 + 구역 진입/근접 정점(apex) 추적 이탈 판정 ─────────────────────
+// enteredZones Map 구조: zoneId → 진입 후 관측된 최소 거리(minDist)
+// 진입 기준: entryDist(alertDist + GPS_DELAY_MARGIN) 이하 → 경고 배너/음성 즉시 트리거
+// 이탈(투표창) 기준: 절대 거리가 아니라 "가장 가까웠던 지점(minDist) 대비 VOTE_EXIT_MARGIN만큼 재이격"
+//   → 마커를 실제로 지나친 직후(10m대)에 바로 확정되며, alertDist 설정값 크기와 무관해짐
 function checkProximity(lat, lng) {
   const settings  = Settings.get();
   const alertDist = settings.alertDistance;
   const entryDist = alertDist + GPS_DELAY_MARGIN; // GPS 딜레이 보정 — 설정 거리보다 앞서 진입 판정
-  const exitDist  = entryDist + EXIT_HYSTERESIS;  // 이탈(투표창 트리거) 확정 경계
 
   allZones.forEach(z => {
     const d          = haversine(lat, lng, z.lat, z.lng);
     const wasEntered = enteredZones.has(z.id);
     const isInside   = d <= entryDist;
-    const isOutside  = d > exitDist; // 히스테리시스 통과 시만 이탈 확정
 
     if (isInside && !wasEntered) {
       // ── 진입 확정 ──
-      enteredZones.set(z.id, Date.now());
+      enteredZones.set(z.id, d); // 최소 거리 추적 시작(초기값 = 진입 시점 거리)
       if (!alertedZones.has(z.id)) {
         alertedZones.add(z.id);
         currentAlertZone = z;
@@ -424,21 +427,27 @@ function checkProximity(lat, lng) {
         if (settings.alertsEnabled) Alert.show(z);
         setTimeout(() => alertedZones.delete(z.id), 60000);
       }
-    } else if (isOutside && wasEntered) {
-      // ── 이탈 확정 (히스테리시스 통과) ──
-      enteredZones.delete(z.id);
+    } else if (wasEntered) {
+      const minDist = enteredZones.get(z.id);
+      if (d < minDist) {
+        // 아직 마커에 근접 중 — 정점(최소 거리) 갱신만 하고 대기
+        enteredZones.set(z.id, d);
+      } else if (d - minDist >= VOTE_EXIT_MARGIN) {
+        // ── 이탈 확정: 정점 대비 재이격 마진 통과 → 마커를 지나친 직후로 확정 ──
+        enteredZones.delete(z.id);
 
-      // 마커 통과 3초 후 경고 배너 소멸
-      clearTimeout(_alertTimeout);
-      _alertTimeout = setTimeout(() => Alert.dismiss(), 3000);
+        // 마커 통과 3초 후 경고 배너 소멸
+        clearTimeout(_alertTimeout);
+        _alertTimeout = setTimeout(() => Alert.dismiss(), 3000);
 
-      // 10m 이탈 확정 즉시 투표 팝업을 지연 없이 다이렉트로 발현 (미세 타이머 체인 제거)
-      // 투표 팝업: 라이딩 중이면 alertsEnabled 설정과 무관하게 무조건 표시
-      if (Ride.active) {
-        const alreadyVoted = Auth.user
-          ? (Array.isArray(z.safeVoterIds) && z.safeVoterIds.includes(Auth.user.id))
-          : false;
-        if (!alreadyVoted) VotePopup.show(z);
+        // 이탈 확정 즉시 투표 팝업을 지연 없이 다이렉트로 발현 (미세 타이머 체인 없음)
+        // 투표 팝업: 라이딩 중이면 alertsEnabled 설정과 무관하게 무조건 표시
+        if (Ride.active) {
+          const alreadyVoted = Auth.user
+            ? (Array.isArray(z.safeVoterIds) && z.safeVoterIds.includes(Auth.user.id))
+            : false;
+          if (!alreadyVoted) VotePopup.show(z);
+        }
       }
     }
   });

@@ -23,7 +23,13 @@ public class BackgroundSafetyPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationMana
     private let locationManager = CLLocationManager()
     private var zones: [[String: Any]] = []
     private var alertedZones   = Set<String>()  // 알림 중복 방지용
-    private var enteredZones   = Set<String>()  // 현재 내부에 있는 구역 (이탈 감지)
+    private var enteredZones   = [String: Double]()  // 진입 중인 구역 id → 진입 후 관측된 최소 거리(minDist)
+    // GPS 딜레이 보정 마진 — JS(app.js)의 GPS_DELAY_MARGIN과 동일한 의도: 설정 거리 그대로 판정하면
+    // 주행 속도상 실제로는 수 미터 늦게 잡히므로, 진입 판정을 앞당겨 체감상 정확한 지점에서 경고되게 함
+    private let gpsDelayMargin: Double = 15
+    // 이탈(투표창) 확정 마진 — 절대 거리가 아닌 "진입 후 가장 가까웠던 지점(minDist)" 대비 재이격 거리.
+    // JS의 VOTE_EXIT_MARGIN과 동일 — 마커를 지나친 직후 10m대에서 바로 이탈이 확정되게 함
+    private let voteExitMargin: Double = 10
     private var audioPlayers: [String: AVAudioPlayer] = [:]
     private var synthesizer = AVSpeechSynthesizer()
     private var isTracking = false
@@ -179,22 +185,23 @@ public class BackgroundSafetyPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationMana
                   let lat = zone["lat"] as? Double,
                   let lng = zone["lng"] as? Double else { continue }
 
-            let type     = zone["type"] as? String ?? "other"
-            let dist     = zone["alertDist"] as? Double ?? globalAlertDist
-            let exitDist = dist + 20  // 히스테리시스: GPS 오차 20m 버퍼
-            let distance = location.distance(from: CLLocation(latitude: lat, longitude: lng))
+            let type      = zone["type"] as? String ?? "other"
+            let baseDist  = zone["alertDist"] as? Double ?? globalAlertDist
+            let entryDist = baseDist + gpsDelayMargin  // GPS 딜레이 보정 — 설정 거리보다 앞서 진입 판정
+            let distance  = location.distance(from: CLLocation(latitude: lat, longitude: lng))
 
-            let wasInside = enteredZones.contains(id)
-
-            if distance <= dist && !wasInside {
+            if let minDist = enteredZones[id] {
+                // ── 진입 중: 정점(minDist) 갱신 또는 재이격 마진 통과 시 이탈 확정 ──
+                if distance < minDist {
+                    enteredZones[id] = distance
+                } else if distance - minDist >= voteExitMargin {
+                    enteredZones.removeValue(forKey: id)
+                    triggerZoneExit(type: type, id: id)
+                }
+            } else if distance <= entryDist {
                 // ── 구역 진입 확정 ──
-                enteredZones.insert(id)
+                enteredZones[id] = distance
                 triggerZoneEntry(type: type, distance: distance, id: id)
-
-            } else if distance > exitDist && wasInside {
-                // ── 구역 이탈 확정 (히스테리시스 통과) ──
-                enteredZones.remove(id)
-                triggerZoneExit(type: type, id: id)
             }
         }
     }
