@@ -325,6 +325,63 @@ document.addEventListener('touchstart', () => AudioUnlock.unlock(), { capture: t
 document.addEventListener('click',      () => AudioUnlock.unlock(), { capture: true, passive: true });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) AudioUnlock.resume(); });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [6차 추가] AudioGate — 앱 진입 시 오디오 언록 전용 게이트 오버레이
+// 5차까지의 언록은 document 전역 touchstart에만 의존했다. 그런데 첫 터치가 지도 팬/줌이면
+// 제스처가 Leaflet 내부에서 소비되고, iOS WebKit은 그런 경로로는 오디오 세션을 열어주지 않는다.
+// → 유저가 "명확한 버튼"을 누르는 트러스트 이벤트 컨텍스트를 강제로 한 번 확보한다.
+// 오디오 잠금은 페이지 로드마다 초기화되므로 localStorage로 영구 스킵하지 않고 로드당 1회 띄운다.
+// 네이티브(Capacitor) 빌드는 AVSpeechSynthesizer 경로라 언록 자체가 불필요 → 노출하지 않는다.
+// ═══════════════════════════════════════════════════════════════════════════
+const AudioGate = {
+  _CONFIRM: '안전 음성 안내를 시작합니다.',
+  _done: false,
+
+  init() {
+    if (window.Capacitor?.isNativePlatform?.()) return;
+
+    const gate = document.getElementById('audio-gate');
+    if (!gate) return;
+    gate.style.display = 'flex';
+
+    // 언록은 제스처 핸들러 "안에서 동기적으로" 끝나야 한다 — 앞에 await를 두면 컨텍스트가 끊긴다
+    const accept = () => {
+      if (this._done) return;
+      this._done = true;
+      this._unlockNow();
+      gate.remove();
+    };
+
+    document.getElementById('audio-gate-btn')?.addEventListener('click', accept);
+    gate.addEventListener('click', accept);   // 오버레이 아무 곳이나 터치해도 통과
+
+    document.getElementById('audio-gate-skip')?.addEventListener('click', e => {
+      e.stopPropagation();          // gate의 accept로 버블링되지 않도록 차단
+      this._done = true;
+      gate.remove();
+    });
+  },
+
+  _unlockNow() {
+    // ① 무음 WAV 재생 + speechSynthesis 프라이밍 + AudioContext 재개 (기존 언록 경로 재사용)
+    AudioUnlock.unlock();
+    AudioUnlock.resume();
+
+    // ② 실제로 들리는 첫 발화. AudioUnlock.unlock()의 프라이밍 발화는 volume 0이라
+    //    엔진이 깨어났는지 유저가 확인할 방법이 없었다. 제스처 컨텍스트 안에서 정상 볼륨으로
+    //    한 번 발화시켜 언록 성사를 소리로 확정한다.
+    if (!window.speechSynthesis) return;
+    if (!Settings.get().ttsEnabled) return;
+    try {
+      const u = new SpeechSynthesisUtterance(this._CONFIRM);
+      u.lang = 'ko-KR'; u.rate = 0.9; u.volume = 1.0;
+      if (!AudioUnlock.koVoice) AudioUnlock.refreshVoices();
+      if (AudioUnlock.koVoice) u.voice = AudioUnlock.koVoice;
+      window.speechSynthesis.speak(u);
+    } catch (e) {}
+  }
+};
+
 // ── Service Worker 메시지 공통 발행 헬퍼 ────────────────────────────────────
 // [iOS 잠금화면 알림 누락 버그 수정 v2]
 // controller.postMessage()는 await 없는 동기 호출 → iOS 백그라운드 짧은 실행 창에서도 즉시 전달
@@ -1823,6 +1880,7 @@ Auth.init();
 LocBtn.init();
 GpsDebug.init();
 PwaNotice.init();
+AudioGate.init();
 GPS.startTracking();
 
 // iOS 네이티브 GPS 브릿지 — 화면 잠금/백그라운드 시(document.hidden) navigator.geolocation이 멈추므로

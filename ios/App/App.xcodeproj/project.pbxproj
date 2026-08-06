@@ -24,6 +24,8 @@
 		B5F2C3D4E5A6B7C8D9E0F1D3 /* SafeRideLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1D2 /* SafeRideLiveActivity.swift */; };
 		B5F2C3D4E5A6B7C8D9E0F1D5 /* VoteIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1D4 /* VoteIntents.swift */; };
 		B5F2C3D4E5A6B7C8D9E0F1D7 /* SupabaseVoteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1D6 /* SupabaseVoteService.swift */; };
+		B5F2C3D4E5A6B7C8D9E0F1F1 /* VoteIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1D4 /* VoteIntents.swift */; };
+		B5F2C3D4E5A6B7C8D9E0F1F2 /* SupabaseVoteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1D6 /* SupabaseVoteService.swift */; };
 		B5F2C3D4E5A6B7C8D9E0F1D8 /* SafeRideActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1C0 /* SafeRideActivityAttributes.swift */; };
 		B5F2C3D4E5A6B7C8D9E0F1D9 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1C2 /* KeychainHelper.swift */; };
 		B5F2C3D4E5A6B7C8D9E0F1DE /* SafeRideWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B5F2C3D4E5A6B7C8D9E0F1DD /* SafeRideWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
@@ -282,6 +284,8 @@
 				B5F2C3D4E5A6B7C8D9E0F1C1 /* SafeRideActivityAttributes.swift in Sources */,
 				B5F2C3D4E5A6B7C8D9E0F1C3 /* KeychainHelper.swift in Sources */,
 				B5F2C3D4E5A6B7C8D9E0F1C5 /* LiveActivityManager.swift in Sources */,
+				B5F2C3D4E5A6B7C8D9E0F1F1 /* VoteIntents.swift in Sources */,
+				B5F2C3D4E5A6B7C8D9E0F1F2 /* SupabaseVoteService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

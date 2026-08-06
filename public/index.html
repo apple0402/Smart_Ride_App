@@ -486,12 +486,16 @@
 
 <!-- ── [5차 추가] PWA 잠금화면 제약 안내 (네이티브 빌드에서는 JS가 자동 제거) ──── -->
 <div id="pwa-notice" class="hidden">
+  <!-- [6차 수정] 우측 상단(top:14/right:14, z-997)에 있던 배지가 #top-bar(z-100)의
+       프로필·기록·설정 버튼을 그대로 덮어 터치를 가로챘다. 우측 하단은 신고 FAB(bottom:260)와
+       내 위치 버튼(bottom:200)이 이미 쓰고 있으므로, 비어 있는 좌측 하단(하단 패널 위)으로 옮긴다.
+       안내 카드도 배지 바로 위에서 펼쳐지되 우측 FAB 열(약 72px)을 침범하지 않도록 right를 잡는다. -->
   <button id="pwa-notice-badge" onclick="PwaNotice.toggle()"
-    style="position:fixed;top:14px;right:14px;z-index:997;background:rgba(249,115,22,0.92);color:#fff;border:none;border-radius:14px;padding:6px 11px;font-size:11px;font-weight:700;box-shadow:0 2px 10px rgba(0,0,0,0.5);cursor:pointer;">
+    style="position:fixed;left:14px;bottom:214px;z-index:997;background:rgba(249,115,22,0.92);color:#fff;border:none;border-radius:14px;padding:6px 11px;font-size:11px;font-weight:700;box-shadow:0 2px 10px rgba(0,0,0,0.5);cursor:pointer;">
     ⚠️ 웹 모드
   </button>
   <div id="pwa-notice-card" class="hidden"
-    style="position:fixed;top:52px;right:14px;left:14px;max-width:330px;margin-left:auto;z-index:997;background:#1e293b;border:1px solid rgba(249,115,22,0.55);border-radius:14px;padding:14px 16px;box-shadow:0 8px 28px rgba(0,0,0,0.6);">
+    style="position:fixed;left:14px;right:82px;bottom:252px;max-width:330px;z-index:997;background:#1e293b;border:1px solid rgba(249,115,22,0.55);border-radius:14px;padding:14px 16px;box-shadow:0 8px 28px rgba(0,0,0,0.6);">
     <div style="font-size:13px;font-weight:800;color:#fdba74;margin-bottom:6px">[알림] 웹 브라우저 모드로 실행 중</div>
     <div style="font-size:12px;color:#cbd5e1;line-height:1.65">
       사파리·크롬 바로가기(PWA)는 애플 정책상 <b style="color:#fca5a5">화면이 잠기면 GPS와 자바스크립트가 정지</b>합니다.
@@ -532,6 +536,34 @@
     <button onclick="VerificationModal.close()"
       class="w-full py-4 bg-green-500 hover:bg-green-400 text-white font-bold rounded-2xl transition-colors text-lg">
       라이딩 시작하기 🚲
+    </button>
+  </div>
+</div>
+
+<!-- ── [6차 추가] 오디오 언록 게이트 ─────────────────────────────────────────────
+     iOS WebKit은 "명확한 유저 제스처 핸들러 안에서 직접 호출된" 재생만 오디오 잠금을 푼다.
+     지도 팬/줌 같은 제스처는 핸들러 체인이 Leaflet 내부라 언록으로 이어지지 않아,
+     GPS 콜백에서 발화하는 경고 음성이 계속 무음으로 남았다.
+     앱 진입 시 1회 전체 화면 게이트를 띄워 확실한 탭을 받아낸다. (기본 hidden, JS가 노출) -->
+<!-- display는 인라인 none으로 시작한다 — Tailwind .hidden(클래스)은 인라인 display에 밀려 무효하다 -->
+<div id="audio-gate"
+  style="position:fixed;inset:0;z-index:9999;background:rgba(2,6,23,0.92);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;padding:28px;">
+  <div style="max-width:340px;text-align:center;">
+    <div style="font-size:56px;line-height:1;margin-bottom:18px;">🔈</div>
+    <div style="font-size:19px;font-weight:900;color:#f1f5f9;line-height:1.5;margin-bottom:10px;">
+      안전 음성 안내 시스템<br>작동 시작
+    </div>
+    <div style="font-size:13px;color:#94a3b8;line-height:1.65;margin-bottom:24px;">
+      애플 정책상 음성 안내를 켜려면 최초 1회 터치가 필요합니다.<br>
+      아래를 눌러 위험 구역 음성 경고를 활성화해 주세요.
+    </div>
+    <button id="audio-gate-btn"
+      style="width:100%;padding:20px;background:#22c55e;color:#fff;border:none;border-radius:18px;font-size:17px;font-weight:900;box-shadow:0 8px 28px rgba(34,197,94,0.35);cursor:pointer;-webkit-tap-highlight-color:transparent;">
+      여기를 터치해 주세요
+    </button>
+    <button id="audio-gate-skip"
+      style="margin-top:14px;background:none;border:none;color:#64748b;font-size:12px;text-decoration:underline;cursor:pointer;">
+      음성 없이 사용하기
     </button>
   </div>
 </div>
