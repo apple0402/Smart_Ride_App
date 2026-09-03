@@ -11,7 +11,13 @@ const mapOptions = { zoomControl: false, attributionControl: false };
 if (L.Map.prototype.setBearing) Object.assign(mapOptions, { rotate: true, bearing: 0 });
 const map = L.map('map', mapOptions).setView(INITIAL_VIEW, 15);
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+// CARTO 래스터 타일 정책 변경 대응 — 키가 있으면 타일 요청에 자동으로 붙는다.
+// 발급받은 키를 CARTO_API_KEY 에 대입하면 워터마크 없는 타일이 내려온다.
+const CARTO_API_KEY = '';
+const CARTO_TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+  + (CARTO_API_KEY ? '?key={apiKey}' : '');
+
+L.tileLayer(CARTO_TILE_URL, { maxZoom: 19, apiKey: CARTO_API_KEY }).addTo(map);
 // 줌 버튼, 내 위치 버튼 모두 제거 — GPS 자동 추적으로 대체
 
 // ── 라이더 마커 ────────────────────────────────────────────────────────────────
