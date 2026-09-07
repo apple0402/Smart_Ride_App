@@ -47,3 +47,49 @@
 - [ ] Swift 컴파일 검증 — **불가(윈도우 환경)**. 맥북에서 Xcode 빌드 필요
 - [ ] 실기 주행 검증 — 4건 모두 필요
 - [x] 커밋 + main 푸시 (Render 자동 배포 트리거)
+
+---
+
+# 지도 관리자 상황실 (/admin)
+
+## 1. 보안 라우트
+- [x] `routes/admin.js` 신규 — Basic Auth (`ADMIN_USER` / `ADMIN_PASSWORD`)
+- [x] 자격증명 미설정 시 **fail-closed** (503, 무인증 통과 금지)
+- [x] `crypto.timingSafeEqual` 비교
+- [x] 가드를 `express.static` **앞에** 장착 — `/admin`, `/admin.html`, `/admin/*` 전부 차단
+- 검증: 무인증 `/admin` `/admin.html` `/admin/api/zones` → 401, 오답 비번 → 401, 정답 → 200
+
+## 2. service_role 삭제/수정 대행
+- [x] `SUPABASE_SERVICE_ROLE_KEY`로 서버 측 Supabase 클라이언트 (지연 생성, 브라우저 미노출)
+- [x] `GET /admin/api/zones` — 전량 조회
+- [x] `PATCH /admin/api/zones/:id` — title / description / severity 화이트리스트만
+- [x] `DELETE /admin/api/zones/:id` — 실제 행 삭제, 0건이면 404
+- [x] 키 미설정 시 503 + 한글 안내 (조용한 실패 방지)
+- [x] 미매칭 `/admin/api/*` → 404 JSON (SPA fallback 누수 차단)
+- 검증: 키 없는 상태에서 503 + 안내 문구 확인, 미매칭 경로 404 확인
+
+## 3. 관리자 UI (`public/admin.html`)
+- [x] Leaflet + CARTO **voyager** 타일 (`CARTO_API_KEY` 반영)
+- [x] 전국 뷰 시작 → 마커 있으면 `fitBounds`
+- [x] 마커 클릭 → 사이드바에 ID / 한글 주소 / 설명 / 유형 / 좌표 / 제보수 / 등록일시
+- [x] 인라인 편집 — 제목·설명·위험도 + [💾 저장] (PATCH)
+- [x] [🚨 마커 삭제] + confirm → DELETE → 지도에서 핀 즉시 제거
+- [x] 브라우저는 Supabase와 직접 통신하지 않음 (키 노출 0)
+- 검증: 인증 통과 시 200, 인라인 JS `node --check` 통과
+
+## 4. 널 세이프티
+- [x] `s(v)` 헬퍼 — null/undefined 어떤 입력에도 문자열만 반환
+- [x] `address` 빈 값 → "(주소 정보 없음 — 과거에 등록된 마커입니다)" 안내로 대체
+- [x] `lat`/`lng` 비수치 행은 마커 생성 건너뜀 (지도 크래시 방지)
+- [x] 미지의 `type` / `severity` → 아이콘·색·라벨 전부 폴백
+- [x] 사용자 입력은 `textContent`로만 렌더 (innerHTML 미사용)
+- 검증: 라이브 데이터에서 `address:""` 행 실재 확인
+
+## 마감
+- [x] `node --check server.js` / `routes/admin.js` / admin.html 인라인 JS
+- [x] 서버 기동 + 인증 매트릭스 9종 실측
+- [x] `ZONE_COLUMNS` 11개 컬럼을 라이브 스키마 대조 (REST 200)
+- [x] 기존 앱 라우트 무영향 확인 (`/`, `/api/health` 200)
+- [ ] **Render 환경변수 3종 등록 필요** — `ADMIN_USER`, `ADMIN_PASSWORD`, `SUPABASE_SERVICE_ROLE_KEY`
+- [ ] 배포 후 실제 수정/삭제 1건 실측 — service_role 키 없이는 검증 불가
+- [x] 커밋 + main 푸시 (Render 자동 배포 트리거)

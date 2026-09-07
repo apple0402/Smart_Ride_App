@@ -222,3 +222,96 @@ pbxproj는 ID가 전역 유일해야 하므로 프로젝트가 깨진다. `…F1
 - **2번의 129pt는 계산값이지 실측값이 아니다.** 한글 폰트 메트릭과 기기 폭에 따라
   달라질 수 있으니 실기에서 잘림이 남으면 `buttonHeight`(54)를 먼저 줄여볼 것.
 - 4건 모두 **실기 주행 검증이 필요하다.**
+
+---
+
+# 지도 관리자 상황실 (/admin) — 설계 결정
+
+## 왜 브라우저에서 직접 삭제하지 않았나 (핵심)
+
+`supabase/schema.sql:104` 의 정책이 이렇게 걸려 있다.
+
+```sql
+CREATE POLICY "zones_delete" ON zones FOR DELETE USING (auth.uid() IS NOT NULL);
+```
+
+관리자 페이지는 Basic Auth만 통과할 뿐 **Supabase 로그인 세션이 없다.** 그래서 브라우저에서
+anon 키로 `sb.from('zones').delete()` 를 호출하면 `auth.uid()` 가 null이라 정책에 막히는데,
+PostgREST는 이걸 **에러가 아니라 "0건 삭제 성공"으로 돌려준다.** 화면에서는 핀이 사라지고
+성공 토스트까지 뜨는데 새로고침하면 그대로 살아 있는, 가장 나쁜 종류의 조용한 실패다.
+
+그래서 쓰기(PATCH/DELETE)는 전부 Express가 `service_role` 키로 대행한다. service_role은
+RLS를 우회하므로 정책과 무관하게 동작하고, 키는 서버 프로세스 밖으로 나가지 않는다.
+
+**대안이었던 "RLS 완화"는 기각했다.** `USING (true)` 로 열면 anon 키만 가진 일반 앱 사용자
+누구나 남의 제보를 지울 수 있게 된다. 관리자 전용이라는 전제가 무너진다.
+
+## 왜 가드를 express.static 앞에 뒀나
+
+`server.js` 는 미들웨어가 위에서부터 순서대로 도는데, 원래 `express.static(public)` 이
+모든 라우트보다 먼저 있었다. `public/admin.html` 을 그 뒤에서 보호하면 **`/admin` 은 막혀도
+`/admin.html` 을 직접 치면 static이 먼저 낚아채서 무인증으로 파일이 통째로 나간다.**
+
+그래서 `adminGuard` 를 static 앞에 두고, 경로 3종(`/admin`, `/admin.html`, `/admin/*`)을
+직접 매칭한다. `app.use('/admin', ...)` 로는 **`/admin.html` 이 매칭되지 않는다** —
+Express의 prefix 매칭은 `/admin` 과 `/admin/...` 만 잡기 때문이다. 이 점이 함정이었다.
+
+## fail-closed
+
+`ADMIN_USER` / `ADMIN_PASSWORD` 가 비어 있으면 통과시키지 않고 503으로 끊는다.
+환경변수 누락이 곧 "전국 제보 데이터 무인증 공개"가 되는 사고를 막기 위해서다.
+
+## PATCH 화이트리스트
+
+수정 가능 컬럼은 `title` / `description` / `severity` 3개로 못 박았다. 요청 본문에 뭘 넣든
+나머지는 무시된다. `lat`/`lng`/`id`/`report_count` 가 관리 UI에서 바뀌면 앱 쪽 거리 계산과
+중복 판정이 흔들린다. `title` 은 NOT NULL 이라 빈 문자열 저장을 400으로 막는다.
+`severity` 는 `high|medium|low` 화이트리스트 — 앱의 `SEV_COLORS` / `SEV_RADIUS` 가
+이 3개 키로만 조회하므로 다른 값이 들어가면 폴백 색으로 렌더된다.
+
+## 널 세이프티를 `|| ''` 대신 `s()` 헬퍼로 한 이유
+
+`z.address || ''` 는 값이 `0` 이거나 `false` 일 때도 빈 문자열로 만든다. `report_count` 처럼
+숫자 컬럼에 같은 패턴을 쓰면 **제보 0건이 빈칸으로 보인다.** `s(v)` 는 null/undefined만
+빈 문자열로 바꾸고 나머지는 `String()` 으로 보존한다.
+
+라이브 데이터를 REST로 확인해 보니 실제로 `address:""` 인 행이 다수 있었다 (역지오코딩
+프록시 도입 이전에 등록된 마커들). 빈 주소는 그냥 빈칸으로 두지 않고
+"(주소 정보 없음 — 과거에 등록된 마커입니다)" 로 안내해서 상황실장이 "로딩 실패"와
+"원래 없음"을 구분할 수 있게 했다.
+
+좌표가 깨진 행(`lat`/`lng` 가 숫자가 아님)은 마커 생성을 건너뛴다. `L.marker([NaN, NaN])`
+는 Leaflet 내부에서 던져서 **그 이후 마커가 한 개도 안 찍힌다.**
+
+## 타일
+
+앱(`app.js`)은 `dark_all` 을 쓰지만 관리자 화면은 요청대로 `rastertiles/voyager` 다.
+키 바인딩 구조(`?key={apiKey}` + `L.tileLayer(..., { apiKey })`)는 `app.js:14-20` 과 동일하게
+맞췄다. 키를 교체할 일이 생기면 **두 곳 다** 고쳐야 한다.
+
+## Tailwind를 안 쓴 이유
+
+`public/index.html:28` 주석에 적혀 있듯 `cdn.tailwindcss.com` 은 빌드 산출물이 아니라
+런타임 JIT 스크립트다. 관리자 페이지는 화면 하나뿐이라 인라인 CSS가 더 빠르고 의존성이 없다.
+
+## 배포 전 필수 작업 (미완료)
+
+Render 대시보드 → Environment 에 **3개를 추가해야 동작한다.**
+
+| 키 | 값 |
+|---|---|
+| `ADMIN_USER` | 원하는 관리자 아이디 |
+| `ADMIN_PASSWORD` | 충분히 긴 비밀번호 |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Settings → API → `service_role` secret |
+
+`SUPABASE_URL` 은 이미 있다고 가정한다. 셋 중 하나라도 없으면 `/admin` 은 503으로 막힌다
+(뚫리지 않고 막히는 쪽이라 안전하다).
+
+## 검증 한계 (중요)
+
+- **수정/삭제가 실제로 DB에 반영되는지는 검증하지 못했다.** 로컬에 `service_role` 키가 없어서
+  모든 쓰기 경로가 503에서 끊긴다. 배포 후 **삭제해도 되는 테스트 마커 1건으로 반드시
+  수정 1회 + 삭제 1회를 실측할 것.** 삭제 후 새로고침해서 되살아나지 않는지까지 봐야 한다.
+- 조회 경로는 anon 키로 라이브 REST를 직접 때려 11개 컬럼 전부 존재함을 확인했다.
+- 인증 계층은 로컬 서버를 실제로 띄워 401/200 매트릭스 9종을 curl로 실측했다.
+- 이 프로젝트에는 테스트 스위트가 없다 (`package.json` 에 `test` 스크립트 없음).

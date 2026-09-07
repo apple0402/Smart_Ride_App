@@ -17,6 +17,13 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── 관리자 상황실 (/admin) ────────────────────────────────────────────────────
+// 가드는 반드시 express.static 앞에 둔다. 뒤에 두면 /admin.html 직접 접근으로 인증이 뚫린다.
+const { adminGuard, adminRouter } = require('./routes/admin');
+app.use(adminGuard);
+app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.use('/admin', adminRouter);
+
 // ── 정적 파일 서빙 (프론트엔드가 Supabase와 직접 통신) ──────────────────────
 app.use(express.static(path.join(__dirname, 'public')));
 
