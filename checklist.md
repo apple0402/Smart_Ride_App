@@ -166,3 +166,21 @@
 ## 마감
 - [x] `node --check` server.js / routes / app.js / admin.html 인라인 JS
 - [x] 커밋 2개 + main 푸시 (`688da0e`, `fea7d33`)
+
+---
+
+# 상황실 워터마크 + 위험도 필터 (2026-09-14)
+
+## 1. CARTO 워터마크
+- [x] 원인 검증 — 코드 누락 아님. Render `config.js` 가 `CARTO_API_KEY:""` (환경변수 미등록)
+- [x] 하드코딩 복원 대신 Render 환경변수 등록으로 결정 (사용자 선택) — 코드 변경 없음
+- [ ] **Render → Environment 에 `CARTO_API_KEY` 등록 + 재배포 (사용자)**
+- [ ] 등록 후 Render `config.js` 에 키가 실렸는지 확인
+
+## 2. 위험도 필터
+- [x] 위험도별 레이어 3개 + 지도 우측 상단 토글 버튼 (기본 전부 켜짐)
+- [x] `addLayer` / `removeLayer` 토글, 버튼에 위험도별 건수 표시
+- [x] [하] 노랑 유지 (사용자 선택)
+- [x] Leaflet·DOM 스텁으로 토글 / 재렌더 / 분류 동작 실측 — 8건 통과
+- [x] `node --check` admin.html 인라인 JS
+- [ ] 커밋 + main 푸시

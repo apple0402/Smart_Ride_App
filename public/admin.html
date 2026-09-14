@@ -51,6 +51,14 @@
       box-shadow:0 6px 24px rgba(0,0,0,0.5); max-width:min(90vw,520px); }
     #toast.err { border-color:var(--danger); color:#fecaca; }
 
+    /* 위험도 필터 (지도 우측 상단 Leaflet 컨트롤) */
+    .sev-filter { display:flex; flex-direction:column; gap:6px; }
+    .sev-filter button { width:auto; display:flex; align-items:center; gap:8px; padding:7px 12px;
+      font-size:13px; background:var(--panel); color:var(--text); border:1px solid var(--line);
+      box-shadow:0 2px 10px rgba(0,0,0,0.5); }
+    .sev-filter button[aria-pressed="false"] { opacity:0.45; text-decoration:line-through; }
+    .sev-filter .dot { width:12px; height:12px; border-radius:50%; border:2px solid #fff; flex-shrink:0; }
+
     hr.sep { border:none; border-top:1px solid var(--line); margin:18px 0; }
 
     @media (max-width:820px) {
@@ -101,7 +109,15 @@ const s = v => (v === null || v === undefined) ? '' : String(v);
 const map = L.map('map', { zoomControl:true }).setView([36.5, 127.8], 7);
 L.tileLayer(CARTO_TILE_URL, { maxZoom:19, apiKey:CARTO_API_KEY, attribution:'&copy; OpenStreetMap, &copy; CARTO' }).addTo(map);
 
-const layer   = L.layerGroup().addTo(map);
+// 위험도별 레이어 — 필터 토글은 레이어 단위로 map.addLayer / removeLayer 한다.
+// 알 수 없는 severity는 핀 색 폴백(주황)과 같게 [중]으로 분류한다.
+const SEV_KEYS  = ['high', 'medium', 'low'];
+const SEV_SHORT = { high:'상', medium:'중', low:'하' };
+const sevLayers = { high: L.layerGroup(), medium: L.layerGroup(), low: L.layerGroup() };
+const sevOn     = { high: true, medium: true, low: true };   // 기본값: 전부 표시
+SEV_KEYS.forEach(k => sevLayers[k].addTo(map));
+const sevOf = zone => SEV_COLORS[s(zone.severity)] ? s(zone.severity) : 'medium';
+
 const markers = new Map();   // id → L.Marker
 let zones     = [];
 let selected  = null;        // 선택된 zone의 id
@@ -121,22 +137,54 @@ function markerIcon(zone, active) {
 }
 
 function renderMarkers() {
-  layer.clearLayers();
+  SEV_KEYS.forEach(k => sevLayers[k].clearLayers());
   markers.clear();
   const pts = [];
+  const perSev = { high:0, medium:0, low:0 };
 
   zones.forEach(z => {
     const lat = Number(z.lat), lng = Number(z.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;   // 좌표 깨진 행은 건너뛴다
     const m = L.marker([lat, lng], { icon: markerIcon(z, z.id === selected) })
       .on('click', () => select(z.id));
-    m.addTo(layer);
+    m.addTo(sevLayers[sevOf(z)]);
+    perSev[sevOf(z)]++;
     markers.set(z.id, m);
     pts.push([lat, lng]);
   });
 
   document.getElementById('count').textContent = `제보 마커 ${zones.length}건`;
+  SEV_KEYS.forEach(k => {
+    sevButtons[k].querySelector('.txt').textContent = `위험도 [${SEV_SHORT[k]}] ${perSev[k]}건`;
+  });
   if (pts.length && selected === null) map.fitBounds(pts, { padding:[60, 60], maxZoom:14 });
+}
+
+// ── 위험도 필터 (지도 우측 상단) ─────────────────────────────────────────────
+const sevButtons = {};
+const filterCtl  = L.control({ position:'topright' });
+filterCtl.onAdd = () => {
+  const box = L.DomUtil.create('div', 'sev-filter');
+  L.DomEvent.disableClickPropagation(box);   // 버튼 클릭이 지도 클릭·드래그로 새지 않게
+  SEV_KEYS.forEach(k => {
+    const btn = el('button', { type:'button', title:`위험도 [${SEV_SHORT[k]}] 마커 표시/숨김` }, [
+      el('span', { className:'dot', style:`background:${SEV_COLORS[k]}` }),
+      el('span', { className:'txt', textContent:`위험도 [${SEV_SHORT[k]}]` })
+    ]);
+    btn.setAttribute('aria-pressed', 'true');
+    btn.onclick = () => toggleSev(k);
+    sevButtons[k] = btn;
+    box.appendChild(btn);
+  });
+  return box;
+};
+filterCtl.addTo(map);
+
+function toggleSev(k) {
+  sevOn[k] = !sevOn[k];
+  if (sevOn[k]) map.addLayer(sevLayers[k]);
+  else map.removeLayer(sevLayers[k]);
+  sevButtons[k].setAttribute('aria-pressed', String(sevOn[k]));
 }
 
 // ── 사이드바 ──────────────────────────────────────────────────────────────────
