@@ -1,6 +1,6 @@
 {
   "appId": "com.gansam.smartrider",
-  "appName": "Smart Rider",
+  "appName": "Safe Ride",
   "webDir": "public",
   "plugins": {
     "TextToSpeech": {},

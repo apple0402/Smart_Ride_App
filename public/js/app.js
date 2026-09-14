@@ -12,8 +12,8 @@ if (L.Map.prototype.setBearing) Object.assign(mapOptions, { rotate: true, bearin
 const map = L.map('map', mapOptions).setView(INITIAL_VIEW, 15);
 
 // CARTO 래스터 타일 정책 변경 대응 — 키가 있으면 타일 요청에 자동으로 붙는다.
-// 발급받은 키를 CARTO_API_KEY 에 대입하면 워터마크 없는 타일이 내려온다.
-const CARTO_API_KEY = 'cb1_2u1x_1_44a47fad383d59b276bc2d2e';
+// 키는 소스에 하드코딩하지 않고 config.js(빌드 시 생성, generate-config.js 참고)에서 읽는다.
+const CARTO_API_KEY = (window.__SAFE_RIDE_ENV__ && window.__SAFE_RIDE_ENV__.CARTO_API_KEY) || '';
 const CARTO_TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
   + (CARTO_API_KEY ? '?key={apiKey}' : '');
 

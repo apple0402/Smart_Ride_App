@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Safe Ride</string>
+    <string name="title_activity_main">Safe Ride</string>
+    <string name="package_name">com.gansam.smartrider</string>
+    <string name="custom_url_scheme">com.gansam.smartrider</string>
+</resources>

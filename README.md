@@ -1,4 +1,4 @@
-# Smart Rider (Safe Ride)
+# Safe Ride
 
 자전거 안전 라이딩 알림 앱 — GPS 기반 위험구역 감지, 실시간 경고, 잠금화면 Live Activity 지원.
 

@@ -1,7 +1,57 @@
-# 6차 실전 라이딩 피드백 — 수정 체크리스트
+# 7차 — 정식 출시 빌드/보안 세팅 체크리스트
 
-> 원 피드백 4건. 각 항목의 **실제 원인**은 `context-notes.md` 참조 (사용자 제시 원인과 다른 건이 1개, 제시안을 반려한 건이 1개).
-> 5차까지의 체크리스트는 커밋 `1394f90` 시점의 이 파일 이력 참조.
+> 상세 근거는 `context-notes.md`의 "7차 — 정식 출시 빌드/보안 세팅" 참조.
+> 6차까지의 체크리스트는 커밋 `6f24256` 시점의 이 파일 이력 참조.
+
+## 1. 앱 이름 변경 (Smart Rider → Safe Ride)
+- [x] `capacitor.config.json` / `ios/App/App/capacitor.config.json` — appName
+- [x] `ios/App/App/Info.plist` — CFBundleDisplayName
+- [x] `public/manifest.json` — name / short_name (PWA 홈 화면 표시)
+- [x] 루트 `index.html`(미사용 중복 파일) title + 표시 텍스트
+- [x] `README.md`, `package.json` description
+- [x] iOS 디버그 로그 프리픽스 `[SmartRider]` → `[SafeRide]` 2곳
+- [x] `public/index.html`, `public/admin.html`은 이미 "Safe Ride" — 변경 불필요 확인
+
+## 2. 번들 ID
+- [x] 조사 결과 이미 `com.gansam.smartrider`로 전부 일치, 임시 마크 없음
+- [x] **변경하지 않기로 결정** — App Store Connect 앱 레코드가 이미 있을 경우 Bundle ID는
+      되돌릴 수 없이 바뀌므로 더 안전한 유지를 기본값으로 택함 (근거는 context-notes 참조)
+- [ ] 사용자 확인 필요: 앱 스토어 커넥트에 아직 앱 레코드 등록 전이라면 `com.gansam.saferide`로
+      바꿔도 안전 — 필요 시 요청
+
+## 3. CARTO API Key 방어
+- [x] `app.js`, `admin.html` 하드코딩 키 제거 → `config.js`(빌드 시 생성)에서 읽도록 변경
+- [x] `generate-config.js` 신규 — env(`CARTO_API_KEY`, `ALLOWED_ORIGINS`) → `public/js/config.js`
+- [x] 오리진 화이트리스트 검증 로직 추가 (한계: 뷰소스로 우회 가능 — 문서화함)
+- [x] `public/js/config.js`를 `.gitignore`에 추가, `config.example.js` 템플릿 커밋
+- [x] `.env`에 `CARTO_API_KEY` / `ALLOWED_ORIGINS` 추가
+- [x] CARTO 대시보드 도메인 제한 설정 안내 작성 (context-notes.md)
+- [ ] **사용자가 CARTO 대시보드에서 실제로 도메인 제한 설정할 것**
+- [ ] **사용자가 CARTO 키 재발급(rotate)할 것** — 기존 키는 git 히스토리에 이미 노출됨
+- [ ] Render 환경변수에 `CARTO_API_KEY`(재발급분), `ALLOWED_ORIGINS` 등록
+
+## 4. 프로덕션 빌드 스크립트
+- [x] `generate-config.js`, `build-prod.js` 신규 (esbuild minify + drop console/debugger)
+- [x] `package.json` — `build`, `build:config`, `cap:sync:prod`, `android:sync` 스크립트 추가
+- [x] `server.js` — `dist/public` 존재 시 우선 서빙하는 `WEB_DIR` 분기 추가
+- [x] `capacitor.config.prod.json` 신규 (webDir: dist/public)
+- [x] 로컬 검증: `npm run build` 실행 → 서버 기동 → `/`, `/js/app.js`, `/js/config.js`,
+      `/api/health` 200 확인, 압축 파일에 `console.` 0건 확인
+- [x] 검증 후 테스트용 `dist/` 삭제 (로컬 개발 흐름 원상 복구)
+- [ ] **Render 대시보드 Build Command를 `npm install && npm run build`로 변경할 것**
+      (안 하면 배포본은 압축 전 원본이 그대로 나감)
+
+## 5. Android 정식 패키지
+- [x] `@capacitor/android` 설치 + `npx cap add android` (플랫폼 신규 생성)
+- [x] `applicationId`/`app_name` 자동 생성값 확인 (`com.gansam.smartrider` / "Safe Ride")
+- [x] `android/app/build.gradle` — `keystore.properties` 기반 release 서명 설정 추가
+- [x] `android/keystore.properties.example` 템플릿, `.gitignore`에 키스토어/설정 제외 추가
+- [x] `npm run android:bundle` / `npm run android:apk` 스크립트 추가 + 추출 경로 문서화
+- [ ] **사용자가 로컬(JDK/Android SDK 있는 환경)에서 업로드 키스토어 생성 필요**
+      (`keytool -genkeypair ...`, 이 환경엔 Java가 없어 여기서 생성 불가·안 함)
+- [ ] **사용자가 로컬에서 `npm run android:bundle` 실제 실행해서 .aab 뽑아볼 것**
+      (이 환경엔 Gradle/Android SDK가 없어 한 번도 실행해보지 못함)
+- [ ] Play Console 비공개 테스트 트랙에 업로드 + 실기기 설치 검증
 
 ## 1. 잠금화면 투표 버튼 탭 → 카드가 그대로 남음 (최종 해결)
 - [x] **근본 원인 특정**: `VoteIntents.swift`가 `SafeRideWidgets` 익스텐션 타겟에만 컴파일되어 있었음

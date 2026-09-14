@@ -27,7 +27,7 @@ final class LiveActivityManager {
                 pushType: nil
             )
         } catch {
-            print("[SmartRider] Live Activity 세션 시작 실패: \(error)")
+            print("[SafeRide] Live Activity 세션 시작 실패: \(error)")
         }
     }
 

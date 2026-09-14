@@ -1,8 +1,158 @@
-# 6차 피드백 — 결정 사항과 근거
+# 7차 — 정식 출시 빌드/보안 세팅
 
-작성: 2026-08-06 / 기준 커밋: `1394f90` (5차 피드백)
+작성: 2026-09-14 / 기준 커밋: `6f24256` (지도 관리자 상황실 추가)
 
-> 5차까지의 노트는 커밋 `1394f90` 시점의 이 파일 이력에 남아 있다.
+> 6차까지의 노트는 커밋 `6f24256` 시점의 이 파일 이력에 남아 있다.
+
+## 요약
+
+앱 이름 전면 변경(Smart Rider → Safe Ride), 번들 ID 유지 결정, CARTO/Supabase 키 노출
+정리, 프로덕션 빌드 스크립트 신설, Android 플랫폼 신규 추가까지 했다. **실제 서명된
+.aab/.apk 파일은 이 세션에서 만들지 못했다** — 이 환경에 JDK/Android SDK가 없고, 정식
+서명 키스토어는 사용자가 직접 만들어 보관해야 하는 자산이라 임의로 생성하지 않았다.
+
+## 1. 앱 이름 변경
+
+서빙되는 실제 페이지(`public/index.html`, `public/admin.html`)는 이미 "Safe Ride"였다.
+잔여 "Smart Rider" 표기를 전부 정리했다:
+`capacitor.config.json`, `ios/App/App/capacitor.config.json`, `ios/App/App/Info.plist`
+(`CFBundleDisplayName`), `public/manifest.json`(PWA 홈 화면 이름), 루트 `index.html`(미사용
+중복 파일로 보이지만 일관성을 위해 같이 수정), `README.md`, `package.json`의
+`description`, iOS 디버그 로그 프리픽스 2곳(`[SmartRider]` → `[SafeRide]`). `npx cap add
+android` 로 새로 생성된 Android 리소스(`strings.xml`)는 처음부터 "Safe Ride"로 생성됐다
+(capacitor.config.json을 이미 고쳐둔 뒤 추가했기 때문).
+
+`package.json`의 `"name": "smart-rider-app"`(npm 패키지 식별자, 사용자에게 안 보임)은
+건드리지 않았다 — 요청한 "표시되는 이름"에 해당하지 않는다.
+
+## 2. 번들 ID — 변경하지 않고 `com.gansam.smartrider` 유지
+
+사용자가 "정식 상용화 배포에 가장 매끄러운 형태로 확정"해 달라고 위임했다. 조사해보니
+이미 `capacitor.config.json` / iOS Xcode 프로젝트(App, SafeRideWidgets 타겟) 전부
+`com.gansam.smartrider`로 일치되어 있었고 임시 테스트 마크는 없었다.
+
+**바꾸지 않은 이유:** 사용자가 "베타 테스트를 성공적으로 마쳤다"고 했다 — TestFlight
+베타가 이미 이 Bundle ID로 App Store Connect에 앱 레코드가 만들어져 있을 가능성이 높다.
+**Bundle ID는 App Store Connect에 앱 레코드를 한 번 만들고 나면 그 뒤로 절대 바꿀 수
+없다.** 지금 `com.gansam.saferide`로 바꾸면 기존 앱 레코드/베타 이력을 버리고 완전히
+새 앱으로 처음부터 등록해야 한다. 반대로 앱 레코드가 아직 없다면 지금 바꿔도 손해는
+없지만, 이미 있다면 되돌릴 수 없는 손실이라 **더 안전한 쪽(유지)을 기본값으로 택했다.**
+앱 스토어 커넥트에 아직 앱 레코드를 등록한 적이 없는 게 확실하면 알려달라 — 그 경우엔
+`com.gansam.saferide`로 바꿔도 된다.
+
+## 3. CARTO API Key 방어 — 실제로 뭘 했고 뭘 못 하는지
+
+**중요한 전제:** `public/js/supabase-client.js`의 Supabase anon key는 건드리지 않았다.
+코드 주석에도 이미 있듯 anon key는 RLS(Row Level Security)로 보호되는 **공개 키**라
+브라우저 노출이 정상이다 — 취약점이 아니라서 "방어"할 대상이 아니다.
+
+CARTO 키는 다르다. 티어/쿼터가 있는 유료성 자원이라 도용되면 실제로 손해가 난다. 그런데
+**클라이언트 JS에 있는 키는 브라우저 개발자도구로 무조건 읽힌다.** 난독화·압축을 아무리
+해도 이건 못 막는다 — "최소한의 난독화 레이어"를 문자 그대로 구현하는 건 가짜 보안이라
+하지 않았다. 대신 실제로 효과가 있는 세 가지를 했다:
+
+1. **소스에서 키를 뺐다.** `app.js`와 `admin.html`에 각각 하드코딩되어 있던 키(두 곳 다
+   같은 키를 썼다 — `context-notes.md` 6차 기록에 "키 교체 시 두 곳 다 고쳐야 한다"고
+   이미 경고돼 있었다)를 지우고, 둘 다 빌드 시 생성되는 `public/js/config.js`에서
+   `window.__SAFE_RIDE_ENV__.CARTO_API_KEY`를 읽도록 바꿨다. 이제부터 **새 커밋에는
+   평문 키가 안 들어간다.**
+2. **오리진 검증을 넣었다** (`generate-config.js`가 만드는 `config.js` 안의 IIFE).
+   `location.origin`이 `ALLOWED_ORIGINS`(env, 배포 도메인)에 없으면 키를 빈 문자열로
+   내려준다. 네이티브 앱(`capacitor:`/`ionic:`/`file:` 프로토콜)은 항상 통과시킨다.
+   **한계:** 이건 단순 핫링크·복붙 재사용을 막는 저지선일 뿐이다. `config.js` 파일
+   자체의 응답 본문에는 여전히 실제 키 문자열이 그대로 들어있어서, 마음먹고 뷰소스로
+   꺼내 가는 사람은 이 검증을 우회한 채(자기 코드에서 직접 호출) 얼마든지 쓸 수 있다.
+3. **진짜 방어인 CARTO 대시보드 도메인 제한 — 아래 안내대로 설정 필요.**
+
+### CARTO 대시보드 도메인 제한 설정 (사용자가 직접 해야 함)
+
+1. https://app.carto.com 로그인 → 우측 상단 계정 메뉴 → **Developers** (또는 API Keys
+   관리 화면) 이동.
+2. 현재 쓰고 있는 API Key(`cb1_2u1x_1_44a47fad383d59b276bc2d2e`) 찾아서 편집.
+3. **Allowed URLs / Domain restriction** 항목에 실제 서비스 도메인만 등록:
+   - `https://smart-ride-app-nrle.onrender.com/*` (README에 적힌 현재 Render 배포 주소)
+   - 커스텀 도메인을 연결했다면 그 도메인도 추가
+   - 네이티브 앱(iOS/Android)은 이 화이트리스트의 영향을 받지 않는다(리퍼러가 없거나
+     앱 자체 스킴이라) — 별도로 "앱 번들 ID 등록" 옵션이 있으면 같이 등록.
+4. **키 재발급(rotate) 강력 권장.** 지금 쓰는 키는 이미 여러 커밋에 평문으로 git
+   히스토리에 남아 있다 — 코드에서 지워도 과거 커밋 blob에는 그대로 있다. 새 키를
+   발급받아 `.env`의 `CARTO_API_KEY`와 Render 환경변수에 반영하고, 예전 키는
+   비활성화할 것.
+
+### 로컬/배포 환경변수
+
+- `.env`: `CARTO_API_KEY`(로컬 개발용, 기존 노출 키 그대로 넣어둠 — 위 4번 재발급 후
+  교체할 것), `ALLOWED_ORIGINS`(비워두면 전체 허용, 로컬 개발 기본값).
+- **Render 대시보드 → Environment**에 `CARTO_API_KEY`(재발급한 새 키)와
+  `ALLOWED_ORIGINS=https://smart-ride-app-nrle.onrender.com` 추가 필요.
+
+## 4. 프로덕션 빌드 스크립트
+
+`npm run build` = `build:config`(env → `public/js/config.js` 생성) → `build:bridge`
+(기존 esbuild 번들) → `build-prod.js`(신규: `public/`를 `dist/public/`로 복사 후 모든
+`.js`를 esbuild `minify + drop:['console','debugger']`로 압축). **원본 `public/`은
+전혀 건드리지 않는다** — 개발 중 `npm run dev`/`cap:sync`는 그대로 `public/`을 쓴다.
+
+`server.js`에 `WEB_DIR` 분기를 추가했다: `dist/public`이 존재하면 그걸, 없으면
+`public/`을 서빙한다. **로컬에서 한 번이라도 `npm run build`를 돌리면 그 뒤로 로컬
+서버가 `dist/`를 우선 서빙한다** — 개발 중 최신 코드를 보고 싶으면 `dist/` 폴더를
+지우면 된다.
+
+**Render 배포 설정 변경 필요:** Render 대시보드 → 서비스 → Settings → Build Command를
+`npm install && npm run build`로 바꿔야 실제 배포본에서도 압축·console 제거가 적용된다
+(지금은 아마 `npm install`만 돌고 있을 것). Start Command는 `npm start` 그대로.
+
+검증: `npm run build` 실행 후 로컬 서버 기동해서 `/`, `/js/app.js`, `/js/config.js`,
+`/api/health` 전부 200 확인. `dist/public/js/app.js`에 `console.` 문자열 0건 확인.
+검증 후 테스트용 `dist/` 폴더는 삭제해서 로컬 개발 흐름을 원상 복구했다.
+
+## 5. Android — 플랫폼은 추가했지만 서명된 .aab/.apk는 못 만들었다
+
+`@capacitor/android` 설치 + `npx cap add android`로 네이티브 프로젝트를 새로 생성했다
+(이 프로젝트엔 원래 iOS만 있었다). `applicationId`/`app_name`은 이미 고쳐둔
+`capacitor.config.json`을 기준으로 자동 생성돼서 `com.gansam.smartrider` / "Safe Ride"로
+맞게 나왔다.
+
+`android/app/build.gradle`에 release 서명 설정을 추가했다 — `android/keystore.properties`
+(커밋 안 함, `.gitignore`에 등록)에서 서명 정보를 읽고, 없으면 서명 없이 빌드된다(디버그
+서명도 아닌 unsigned — Play Console에 못 올라간다). `android/keystore.properties.example`
+을 템플릿으로 남겨뒀다.
+
+**막힌 지점:** 이 환경에 Java/Gradle/Android SDK가 전혀 없다(`java -version` → command
+not found). `npx cap add android`까지는 SDK 없이도 됐지만, 실제 `.aab`/`.apk` 빌드는
+Gradle이 Android SDK를 필요로 해서 여기서는 실행할 수 없다. 또한 정식 서명 키스토어는
+**분실하면 그 앱을 영구히 업데이트할 수 없게 되는 자산**이라 내가 임의로 만들어서 남겨두는
+것 자체가 위험하다고 판단해 만들지 않았다.
+
+### 사용자가 로컬(Android Studio/JDK 설치된 환경)에서 해야 할 일
+
+1. **업로드 키스토어 생성** (최초 1회, 반드시 안전한 곳에 백업):
+   ```
+   cd android
+   keytool -genkeypair -v -keystore upload-keystore.jks -alias upload -keyalg RSA -keysize 2048 -validity 9125
+   ```
+2. `android/keystore.properties.example`을 `android/keystore.properties`로 복사하고
+   방금 만든 키스토어 파일 경로/비밀번호로 채운다.
+3. 저장소 루트에서 빌드 + 추출:
+   ```
+   npm run android:bundle    # Play Console 제출용 .aab
+   npm run android:apk       # 설치 테스트용 .apk
+   ```
+4. **추출 경로:**
+   - AAB: `android/app/build/outputs/bundle/release/app-release.aab`
+   - APK: `android/app/build/outputs/apk/release/app-release.apk`
+5. Play Console → 프로덕션(또는 비공개 테스트) → 새 버전 만들기에서 `app-release.aab`
+   업로드.
+
+## 검증 한계
+
+- Android 빌드 명령(`android:bundle`/`android:apk`)은 이 환경에 Gradle/SDK가 없어서
+  **한 번도 실제로 실행해보지 못했다.** `build.gradle` 문법과 `capacitor.config.prod.json`
+  구조만 확인했다 — 사용자 로컬에서 처음 실행할 때 Gradle 버전/SDK 설치 이슈가 나올 수
+  있다.
+- iOS는 Xcode가 이 환경에 없어서 `cap:sync:prod` 자체도 실행해보지 못했다. `capacitor.config.prod.json`
+  파일 구조만 만들어뒀다.
+- `npm run build` → 서버 기동 → HTTP 200 확인까지는 실제로 돌려서 검증했다.
 
 ## 요약
 

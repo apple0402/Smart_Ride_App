@@ -72,9 +72,11 @@
     </aside>
   </div>
 
+<script src="/js/config.js"></script>
 <script>
 // ── 상수 ──────────────────────────────────────────────────────────────────────
-const CARTO_API_KEY  = 'cb1_2u1x_1_44a47fad383d59b276bc2d2e';
+// 키는 소스에 하드코딩하지 않고 config.js(빌드 시 생성, generate-config.js 참고)에서 읽는다.
+const CARTO_API_KEY  = (window.__SAFE_RIDE_ENV__ && window.__SAFE_RIDE_ENV__.CARTO_API_KEY) || '';
 const CARTO_TILE_URL = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
   + (CARTO_API_KEY ? '?key={apiKey}' : '');
 

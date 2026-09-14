@@ -1,18 +1,25 @@
 {
   "name": "smart-rider-app",
   "version": "1.0.0",
-  "description": "Smart Rider - Bicycle Safety Alert App",
+  "description": "Safe Ride - Bicycle Safety Alert App",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
+    "dev": "npm run build:config && nodemon server.js",
+    "build:config": "node generate-config.js",
     "build:bridge": "esbuild src/capacitor-bridge.js --bundle --outfile=public/js/capacitor-bridge.js --platform=browser --target=es2017 --format=iife",
     "build:beeps": "node scripts/generate-beeps.js",
-    "cap:sync": "npm run build:bridge && npx cap sync ios"
+    "build": "npm run build:config && npm run build:bridge && node build-prod.js",
+    "cap:sync": "npm run build:config && npm run build:bridge && npx cap sync ios",
+    "cap:sync:prod": "npm run build && npx cap sync ios --config capacitor.config.prod.json",
+    "android:sync": "npm run build && npx cap sync android --config capacitor.config.prod.json",
+    "android:bundle": "npm run android:sync && cd android && gradlew.bat bundleRelease",
+    "android:apk": "npm run android:sync && cd android && gradlew.bat assembleRelease"
   },
   "dependencies": {
     "@capacitor-community/native-audio": "^8.0.0",
     "@capacitor-community/text-to-speech": "^8.0.1",
+    "@capacitor/android": "^8.5.2",
     "@capacitor/cli": "^8.4.0",
     "@capacitor/core": "^8.4.0",
     "@capacitor/ios": "^8.4.0",

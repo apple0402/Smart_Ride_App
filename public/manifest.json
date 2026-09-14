@@ -1,6 +1,6 @@
 {
-  "name": "SmartRider",
-  "short_name": "SmartRider",
+  "name": "Safe Ride",
+  "short_name": "Safe Ride",
   "description": "Safe Cycling with Danger Zone Alerts",
   "start_url": "/",
   "display": "standalone",

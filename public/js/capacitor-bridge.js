@@ -258,7 +258,9 @@
             return;
           }
           const index = listeners.indexOf(listenerFunc);
-          this.listeners[eventName].splice(index, 1);
+          if (index !== -1) {
+            this.listeners[eventName].splice(index, 1);
+          }
           if (!this.listeners[eventName].length) {
             this.removeWindowListener(this.windowListeners[eventName]);
           }

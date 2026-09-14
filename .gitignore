@@ -3,6 +3,10 @@ node_modules/
 *.log
 scripts/
 .DS_Store
+dist/
+
+# 빌드 시 CARTO_API_KEY로 생성되는 실제 설정 파일 (public/js/config.example.js 참고)
+public/js/config.js
 
 # Xcode / iOS build artifacts
 ios/DerivedData/

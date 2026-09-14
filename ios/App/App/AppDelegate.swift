@@ -23,7 +23,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
         } catch {
-            print("[SmartRider] AVAudioSession 설정 실패: \(error)")
+            print("[SafeRide] AVAudioSession 설정 실패: \(error)")
         }
     }
 
