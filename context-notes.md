@@ -465,3 +465,68 @@ Render 대시보드 → Environment 에 **3개를 추가해야 동작한다.**
 - 조회 경로는 anon 키로 라이브 REST를 직접 때려 11개 컬럼 전부 존재함을 확인했다.
 - 인증 계층은 로컬 서버를 실제로 띄워 401/200 매트릭스 9종을 curl로 실측했다.
 - 이 프로젝트에는 테스트 스위트가 없다 (`package.json` 에 `test` 스크립트 없음).
+
+---
+
+# 신규 마커 주소 미저장 버그 (2026-09-14)
+
+## 보고된 원인 vs 실제 원인
+
+보고: "폰 앱에는 한글 주소가 보이는데 /admin 사이드바는 비어 있다. admin.html의 `s()`가 덮어쓰는 것 같다."
+
+실측 결과 admin.html은 무죄였다.
+- `s()`/`field()`는 trim 후 한 글자라도 있으면 그대로 출력한다.
+- 라이브 DB: 122건 중 **115건이 `address:""`**. 주소가 있는 7건은 전부 8/1~8/4 등록분이고 이후 0건.
+  9/13 실전 주행분 15건도 전부 빈 주소. 상황실은 DB를 정확히 보여주고 있었다.
+- 폰 앱의 "한글"은 주소가 아니었다. 목록은 `z.desc || z.address` 라 설명문(`유저 제보: [...]`)이,
+  투표 팝업은 주소가 없으면 제목이 대신 보인다.
+- 진짜 원인: `Report.submit` 의 `fetch('/api/geocode')` 상대 경로. Capacitor 설정에 `server.url` 이 없어
+  앱은 번들된 `public/` 을 `capacitor://localhost`(iOS) / `https://localhost`(Android)에서 띄운다.
+  요청이 Render에 닿지 않고 실패 → 빈 `catch {}` 가 삼켜 `address: ''` 로 insert.
+
+요청은 `admin.html` 에 `address || description` 폴백을 넣는 것이었지만, 그러면 "한글 주소" 칸에
+설명문이 뜰 뿐 저장 버그는 그대로라 저장 경로를 고치는 쪽으로 합의했다.
+
+## 앱 수정
+
+- 네이티브(`Capacitor.isNativePlatform()`)일 때만 Render 절대 주소. 웹은 Render가 직접 서빙하므로
+  상대 경로 유지 — 로컬 개발 서버가 운영 서버를 부르지 않게.
+- Render 응답에 CORS 헤더가 없었다(`Origin: https://localhost` 로 실측). `cors()` 를 **`/api/geocode` 에만**
+  건다. 전역으로 열면 `/admin/api/*` 까지 교차 출처 응답이 붙는데 그럴 이유가 없다.
+  `cors` 패키지는 이미 dependencies에 있었다. Nominatim 직접 호출도 CORS는 되지만(`*`),
+  WebView는 User-Agent를 못 정해 이용 정책에 어긋나고 주소 형식이 달라져서 택하지 않았다.
+- **8초 타임아웃**: 기존에는 로컬에서 즉시 실패해 신고 버튼이 바로 풀렸다. 절대 주소로 바꾸면 잠든
+  무료 서버가 깨어나는 수십 초 동안 "제출 중..." 에 묶인다. 주행 중 신고 흐름을 기존과 같게 유지하려고
+  끊는다. 끊긴 건은 빈 주소로 저장되고 상황실 복원 버튼으로 채울 수 있다.
+
+## 배포 주의 (중요)
+
+`public/` 은 앱 안에 번들되므로 **Render 배포만으로는 폰 앱이 고쳐지지 않는다.**
+Android는 `npm run android:sync` 후 재빌드·재설치, iOS는 Mac에서 `npm run cap:sync:prod` 후 Xcode 빌드.
+Render 배포는 서버 쪽 CORS 헤더를 위해 필요하다.
+
+## 과거 마커 주소 복원 (`/admin/api/repair`)
+
+- service_role을 가진 서버가 대행한다. 브라우저는 버튼 클릭과 진행률 조회만 한다.
+- **백그라운드 + 진행률 조회**: 1.1초 × 115건이면 2분이 넘는다. 요청 하나로 기다리면 브라우저나
+  Render 프록시 타임아웃에 걸릴 수 있어 `POST` 는 202로 즉시 응답하고 `GET` 으로 진행률을 본다.
+- 1.1초 간격은 Nominatim 초당 1건 정책에 여유를 둔 값. 실패한 건 뒤에도 쉬어서 연속 실패가
+  연속 요청이 되지 않게 했다.
+- 상태는 메모리에만 둔다. 재시작·재배포되면 끊기지만 대상을 매번 "빈 주소 행"으로 새로 조회하므로
+  다시 누르면 남은 건부터 이어진다. 그래서 작업 테이블을 따로 만들지 않았다.
+- 중복 실행은 409. `running=true` 를 DB 조회 **전에** 세워 동시 요청 두 개가 같이 통과하는 틈을 막는다.
+- **`Number(null) === 0` 함정**: 처음엔 `Number.isFinite(Number(z.lat))` 로만 걸러서 `lat:null` 행이
+  Nominatim까지 호출됐다(가짜 PostgREST 실측에서 발견). null과 빈 문자열을 따로 거른다.
+  참고: `admin.html` 의 `renderMarkers` 도 같은 검사를 쓰고 있어 null 좌표 행은 (0, 경도)에 찍힌다. 이번 범위 밖이라 두었다.
+- 앱 geocode와 같은 `reverseGeocode()` 를 쓰므로 복원된 주소와 앞으로 저장될 주소의 형식이 같다.
+- Render 무료 인스턴스는 15분 무요청 시 잠든다. 2분 작업이라 영향이 없고, 상황실 창의 3초 폴링도 깨워 둔다.
+
+## 검증
+
+- `node --check`: server.js, routes/admin.js, routes/geocode.js, public/js/app.js, admin.html 인라인 JS.
+- 가짜 PostgREST를 띄우고 실제 `server.js` 를 기동해 실측(스크래치패드 `repair-e2e.js`):
+  geocode 응답 `Access-Control-Allow-Origin: *` / `/admin/api/zones` 에는 CORS 헤더 없음 /
+  복원 무인증 401 / 시작 202 / 중복 409 / 조회 쿼리 `or=(address.is.null,address.eq.)` /
+  행별 PATCH 본문에 한글 주소 / 좌표 null 행 제외 / 기존 `/` 200.
+- 실 DB 쓰기는 로컬에 service_role 키가 없어 검증하지 못했다. 배포 후 버튼으로 실행하고
+  anon REST로 빈 주소 건수를 다시 세서 확인한다.

@@ -67,6 +67,8 @@
       <header>
         <h1>🛰️ Safe Ride 상황실</h1>
         <p id="count">불러오는 중…</p>
+        <!-- 임시 도구: 주소가 비어 있는 과거 마커를 좌표로 역지오코딩해 채운다 -->
+        <button id="repair" class="btn-ghost" style="margin-top:10px;padding:8px;font-size:12px">🛠️ 과거 마커 주소 일괄 복원</button>
       </header>
       <div class="body" id="panel"></div>
     </aside>
@@ -291,6 +293,49 @@ async function load() {
 }
 
 load();
+
+// ── 과거 마커 주소 일괄 복원 (임시 도구) ─────────────────────────────────────
+const repairBtn    = document.getElementById('repair');
+const REPAIR_LABEL = repairBtn.textContent;
+
+function showRepair(st) {
+  repairBtn.disabled = !!st.running;
+  repairBtn.textContent = st.running
+    ? `🛠️ 복원 중… ${st.done}/${st.total} (성공 ${st.filled} · 실패 ${st.failed})`
+    : REPAIR_LABEL;
+}
+
+// 진행 중이면 3초마다 진행률을 갱신하고, 끝나는 순간 결과를 알린 뒤 마커를 다시 불러온다.
+async function watchRepair(wasRunning) {
+  try {
+    const st = await api('/admin/api/repair');
+    showRepair(st);
+    if (st.running) return setTimeout(() => watchRepair(true), 3000);
+    if (wasRunning) {
+      toast(`주소 복원 완료 — 성공 ${st.filled}건 · 실패 ${st.failed}건`, st.failed > 0);
+      load();
+    }
+  } catch (e) {
+    toast(e.message, true);
+    showRepair({ running:false });
+  }
+}
+
+repairBtn.onclick = async () => {
+  if (!confirm('주소가 비어 있는 마커를 좌표로 역지오코딩해 한글 주소를 채웁니다.\n1건당 약 1초가 걸리며, 이 창을 닫아도 서버에서 계속 진행됩니다.')) return;
+  repairBtn.disabled = true;
+  try {
+    const st = await api('/admin/api/repair', 'POST');
+    if (!st.total) { toast('주소가 비어 있는 마커가 없습니다.'); return showRepair(st); }
+    showRepair(st);
+    watchRepair(true);
+  } catch (e) {
+    toast(e.message, true);
+    watchRepair(false);   // 409(이미 진행 중)면 진행률 표시로 이어진다
+  }
+};
+
+watchRepair(false);   // 새로고침해도 진행 중인 작업이 있으면 진행률을 이어서 보여준다
 </script>
 </body>
 </html>

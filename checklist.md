@@ -143,3 +143,26 @@
 - [ ] **Render 환경변수 3종 등록 필요** — `ADMIN_USER`, `ADMIN_PASSWORD`, `SUPABASE_SERVICE_ROLE_KEY`
 - [ ] 배포 후 실제 수정/삭제 1건 실측 — service_role 키 없이는 검증 불가
 - [x] 커밋 + main 푸시 (Render 자동 배포 트리거)
+
+---
+
+# 신규 마커 주소 미저장 버그 수정 (2026-09-14)
+
+## 1. 앱 geocode 통신
+- [x] 원인 검증 — admin.html 무죄, DB 115/122건 빈 주소, 상대 경로 + `server.url` 없음
+- [x] `Report.submit` 네이티브에서만 Render 절대 주소 + 8초 타임아웃
+- [x] `server.js` `/api/geocode` 에만 `cors()`
+- [x] 로컬 서버에서 CORS 헤더 실측 — geocode `*`, `/admin/api` 는 헤더 없음
+- [ ] 배포 후 Render에서 CORS 헤더 실측
+- [ ] 폰 앱 재빌드·재설치 (사용자) — Android `android:sync`, iOS는 Mac에서 `cap:sync:prod`
+
+## 2. 과거 마커 주소 복원
+- [x] `reverseGeocode()` 를 geocode.js에서 분리해 공유
+- [x] `POST /admin/api/repair`(백그라운드 시작) / `GET`(진행률), 1.1초 간격, 중복 실행 409
+- [x] 상황실 헤더에 [🛠️ 과거 마커 주소 일괄 복원] 버튼 + 진행률
+- [x] 가짜 Supabase 서버로 복원 루프 끝까지 실측 — 401/202/409/PATCH 확인, `lat:null` 제외 버그 발견 후 수정
+- [ ] 배포 후 버튼 실행 (사용자) → 빈 주소 건수 재확인
+
+## 마감
+- [x] `node --check` server.js / routes / app.js / admin.html 인라인 JS
+- [ ] 커밋 2개 + main 푸시

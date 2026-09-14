@@ -133,6 +133,63 @@ router.delete('/api/zones/:id', async (req, res) => {
   res.json({ deleted: data[0].id });
 });
 
+// ── 과거 마커 주소 일괄 복원 ──────────────────────────────────────────────────
+// 네이티브 앱의 geocode 상대 경로 버그로 address가 빈 채 저장된 행을 좌표로 채운다.
+// Nominatim 정책(초당 1건)을 지키려고 1.1초 간격 — 100건이면 2분이 넘어 요청 하나로 기다릴 수 없으므로
+// 백그라운드로 돌리고 진행률만 조회한다. 상태는 메모리에만 있어 서버 재시작 시 사라지지만,
+// 빈 주소 행만 다시 골라 처리하므로 재실행하면 남은 건부터 이어진다.
+const { reverseGeocode } = require('./geocode');
+const REPAIR_DELAY_MS = 1100;
+let repair = { running: false, total: 0, done: 0, filled: 0, failed: 0, startedAt: null, finishedAt: null };
+
+async function runRepair(db, rows) {
+  for (const z of rows) {
+    try {
+      const address = await reverseGeocode(z.lat, z.lng);
+      if (!address) throw new Error('empty');
+      const { error } = await db.from('zones').update({ address }).eq('id', z.id);
+      if (error) throw error;
+      repair.filled++;
+    } catch (_) {
+      repair.failed++;   // 한 건 실패로 전체를 멈추지 않는다 — 빈 주소로 남아 재실행 대상이 된다
+    }
+    repair.done++;
+    await new Promise(r => setTimeout(r, REPAIR_DELAY_MS));
+  }
+  repair.running = false;
+  repair.finishedAt = new Date().toISOString();
+}
+
+// GET /admin/api/repair — 진행률
+router.get('/api/repair', (req, res) => res.json(repair));
+
+// POST /admin/api/repair — 복원 시작 (202로 즉시 응답)
+router.post('/api/repair', async (req, res) => {
+  const db = requireDb(res);
+  if (!db) return;
+  if (repair.running) return res.status(409).json({ error: '이미 주소 복원이 진행 중입니다.' });
+
+  repair = { running: true, total: 0, done: 0, filled: 0, failed: 0, startedAt: new Date().toISOString(), finishedAt: null };
+
+  const { data, error } = await db
+    .from('zones').select('id, lat, lng').or('address.is.null,address.eq.');
+  if (error) {
+    repair.running = false;
+    return res.status(502).json({ error: error.message });
+  }
+
+  // 좌표가 깨진 행은 역지오코딩할 수 없으니 제외한다 (Number(null)은 0이라 null을 따로 거른다)
+  const validCoord = v => v !== null && v !== '' && Number.isFinite(Number(v));
+  const rows = (data || []).filter(z => validCoord(z.lat) && validCoord(z.lng));
+  repair.total = rows.length;
+  if (!rows.length) {
+    repair.running = false;
+    repair.finishedAt = new Date().toISOString();
+  }
+  res.status(202).json(repair);
+  if (rows.length) runRepair(db, rows);
+});
+
 // 알 수 없는 /admin/api/* 는 SPA fallback(index.html)로 새지 않게 여기서 끊는다.
 router.use('/api', (req, res) => res.status(404).json({ error: '알 수 없는 관리자 API 경로입니다.' }));
 
