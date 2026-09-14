@@ -153,7 +153,7 @@
 - [x] `Report.submit` 네이티브에서만 Render 절대 주소 + 8초 타임아웃
 - [x] `server.js` `/api/geocode` 에만 `cors()`
 - [x] 로컬 서버에서 CORS 헤더 실측 — geocode `*`, `/admin/api` 는 헤더 없음
-- [ ] 배포 후 Render에서 CORS 헤더 실측
+- [x] 배포 후 Render에서 CORS 헤더 실측 — 배포 반영 후 `*` 확인
 - [ ] 폰 앱 재빌드·재설치 (사용자) — Android `android:sync`, iOS는 Mac에서 `cap:sync:prod`
 
 ## 2. 과거 마커 주소 복원
@@ -165,4 +165,4 @@
 
 ## 마감
 - [x] `node --check` server.js / routes / app.js / admin.html 인라인 JS
-- [ ] 커밋 2개 + main 푸시
+- [x] 커밋 2개 + main 푸시 (`688da0e`, `fea7d33`)
