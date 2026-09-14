@@ -40,7 +40,9 @@ app.get('/api/health', (req, res) =>
 );
 
 // ── 역지오코딩 프록시 (마커 등록 시 한글 지번 주소 조회) ────────────────────────
-app.use('/api/geocode', require('./routes/geocode'));
+// 네이티브 앱(capacitor://localhost, https://localhost)이 교차 출처로 호출하므로 CORS를 연다.
+// 이 경로에만 건다 — /admin/api 등 다른 경로까지 교차 출처로 열 이유가 없다.
+app.use('/api/geocode', require('cors')(), require('./routes/geocode'));
 
 // ── SPA fallback ──────────────────────────────────────────────────────────────
 app.get('*', (req, res) => {

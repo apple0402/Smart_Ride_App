@@ -1366,10 +1366,17 @@ const Report = {
     if (btn) { btn.disabled = true; btn.textContent = '제출 중...'; }
 
     try {
+      // 네이티브 앱은 번들된 public/을 capacitor://localhost(iOS)·https://localhost(Android)에서 띄우므로
+      // 상대 경로가 Render에 닿지 않고 조용히 실패해 빈 주소로 저장됐다. 네이티브에서만 절대 주소를 쓴다.
+      // 잠든 무료 서버가 깨어나는 동안 신고가 묶이지 않도록 8초에서 끊는다(빈 주소는 상황실에서 복원 가능).
       let address = '';
       try {
-        const geoRes = await fetch(`/api/geocode?lat=${pos.lat}&lng=${pos.lng}`);
+        const base  = window.Capacitor?.isNativePlatform?.() ? 'https://smart-ride-app-nrle.onrender.com' : '';
+        const ctrl  = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 8000);
+        const geoRes = await fetch(`${base}/api/geocode?lat=${pos.lat}&lng=${pos.lng}`, { signal: ctrl.signal });
         address = (await geoRes.json()).address || '';
+        clearTimeout(timer);
       } catch {}
 
       const result = await API.reportHazard({
