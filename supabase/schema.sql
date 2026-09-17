@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS zones (
     safe_votes INTEGER DEFAULT 0,
     safe_voter_ids TEXT[] DEFAULT '{}',
     status VARCHAR(20) DEFAULT 'active',
+    confirmation VARCHAR(20) DEFAULT 'unconfirmed',  -- unconfirmed | confirmed | review_needed
+    reporter_ids TEXT[] DEFAULT '{}',                -- 서로 다른 신고자 user_id (승격 판정용)
+    pass_count INTEGER DEFAULT 0,                     -- 안전 통과 횟수 (피드백 루프)
+    last_activity_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),  -- 90일 자동 만료 판정용
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -79,6 +83,12 @@ CREATE TABLE IF NOT EXISTS profiles (
     safety_points INTEGER DEFAULT 0,
     total_reports INTEGER DEFAULT 0,
     total_distance DOUBLE PRECISION DEFAULT 0,
+    trust_score DOUBLE PRECISION DEFAULT 1.0,  -- 신고자 신뢰도 (확정/기각 이력 기반)
+    confirmed_reports INTEGER DEFAULT 0,
+    rejected_reports INTEGER DEFAULT 0,
+    contribution_points INTEGER DEFAULT 0,     -- 기여(신고·투표) 포인트
+    activity_points INTEGER DEFAULT 0,         -- 활동(주행) 포인트 (등급 반영 상한 100)
+    distance_points_paid INTEGER DEFAULT 0,    -- 지급 완료된 누적 주행거리 포인트
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

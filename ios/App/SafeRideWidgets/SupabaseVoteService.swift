@@ -1,5 +1,9 @@
-// public/js/api.js의 voteZoneSafe()를 네이티브로 포팅 — 위젯 익스텐션 프로세스에서 Supabase REST 직접 호출
+// public/js/api.js의 voteZoneSafe()를 네이티브로 포팅 — 위젯 익스텐션 프로세스에서 Supabase 직접 호출
 // 토큰 만료·네트워크 실패는 요구사항대로 전부 조용히 무시 (재시도 없음)
+//
+// [재심사 대응] RLS 잠금으로 zones 테이블 직접 PATCH 권한이 제거됨.
+// 중복 방지·집계·해제·투표 포인트(+5)를 모두 서버 RPC(cast_safety_vote, SECURITY DEFINER)가
+// 원자적으로 처리하므로, 여기서는 read-modify-write 없이 RPC 한 번만 호출한다.
 import Foundation
 
 enum SupabaseVoteService {
@@ -10,77 +14,21 @@ enum SupabaseVoteService {
     // 응답 없이 멈춘 것처럼 보임(먹통) — LiveActivityIntent 실행 예산 내에 반드시 끝나도록 단축
     private static let requestTimeout: TimeInterval = 5
 
-    private struct ZoneVoteRow: Decodable {
-        let safeVotes: Int?
-        let safeVoterIds: [String]?
-
-        enum CodingKeys: String, CodingKey {
-            case safeVotes    = "safe_votes"
-            case safeVoterIds = "safe_voter_ids"
-        }
-    }
-
     static func voteSafe(zoneId: String) async {
-        guard let token  = KeychainHelper.readAccessToken(),
-              let userId = KeychainHelper.readUserId(),
-              let zone   = await fetchZone(zoneId: zoneId, token: token)
-        else { return }
+        guard let token = KeychainHelper.readAccessToken() else { return }
 
-        var voterIds = zone.safeVoterIds ?? []
-        guard !voterIds.contains(userId) else { return }
-        voterIds.append(userId)
-
-        let newVotes  = (zone.safeVotes ?? 0) + 1
-        let newStatus = newVotes >= 3 ? "cleared" : "active"
-
-        await updateZone(zoneId: zoneId, votes: newVotes, voterIds: voterIds, status: newStatus, token: token)
-    }
-
-    private static func fetchZone(zoneId: String, token: String) async -> ZoneVoteRow? {
-        guard var components = URLComponents(string: "\(baseURL)/rest/v1/zones") else { return nil }
-        components.queryItems = [
-            URLQueryItem(name: "id", value: "eq.\(zoneId)"),
-            URLQueryItem(name: "select", value: "safe_votes,safe_voter_ids")
-        ]
-        guard let url = components.url else { return nil }
+        guard let url = URL(string: "\(baseURL)/rest/v1/rpc/cast_safety_vote") else { return }
 
         var request = URLRequest(url: url)
+        request.httpMethod = "POST"
         request.timeoutInterval = requestTimeout
-        applyAuthHeaders(&request, token: token)
-
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              let http = response as? HTTPURLResponse,
-              http.statusCode == 200,
-              let rows = try? JSONDecoder().decode([ZoneVoteRow].self, from: data)
-        else { return nil }
-
-        return rows.first
-    }
-
-    private static func updateZone(zoneId: String, votes: Int, voterIds: [String], status: String, token: String) async {
-        guard var components = URLComponents(string: "\(baseURL)/rest/v1/zones") else { return }
-        components.queryItems = [URLQueryItem(name: "id", value: "eq.\(zoneId)")]
-        guard let url = components.url else { return }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "PATCH"
-        request.timeoutInterval = requestTimeout
-        applyAuthHeaders(&request, token: token)
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
-
-        let body: [String: Any] = [
-            "safe_votes": votes,
-            "safe_voter_ids": voterIds,
-            "status": status
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-        _ = try? await URLSession.shared.data(for: request)
-    }
-
-    private static func applyAuthHeaders(_ request: inout URLRequest, token: String) {
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        // 중복 투표(이미 투표함)·비로그인 등은 RPC가 예외로 반환 → 조용히 무시(재시도 없음)
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["p_zone_id": zoneId])
+
+        _ = try? await URLSession.shared.data(for: request)
     }
 }

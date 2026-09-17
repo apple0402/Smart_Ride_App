@@ -76,7 +76,7 @@ function adminGuard(req, res, next) {
 router.use(express.json({ limit: '32kb' }));
 
 const SEVERITIES = ['high', 'medium', 'low'];
-const ZONE_COLUMNS = 'id, lat, lng, title, type, description, address, severity, report_count, status, created_at';
+const ZONE_COLUMNS = 'id, lat, lng, title, type, description, address, severity, report_count, status, confirmation, last_activity_at, created_at';
 
 // GET /admin/api/zones — 전국 마커 전량
 router.get('/api/zones', async (req, res) => {
@@ -118,6 +118,29 @@ router.patch('/api/zones/:id', async (req, res) => {
   if (error) return res.status(502).json({ error: error.message });
   if (!data || !data.length) return res.status(404).json({ error: '해당 마커를 찾을 수 없습니다.' });
   res.json({ zone: data[0] });
+});
+
+// POST /admin/api/zones/:id/close — 공사 종료 등 수동 종료 (status='expired', 지도에서 숨김)
+router.post('/api/zones/:id/close', async (req, res) => {
+  const db = requireDb(res);
+  if (!db) return;
+
+  const { data, error } = await db
+    .from('zones').update({ status: 'expired' }).eq('id', req.params.id).select(ZONE_COLUMNS);
+
+  if (error) return res.status(502).json({ error: error.message });
+  if (!data || !data.length) return res.status(404).json({ error: '해당 마커를 찾을 수 없습니다.' });
+  res.json({ zone: data[0] });
+});
+
+// POST /admin/api/expire-stale — 90일 무활동 마커 일괄 만료 (수동 트리거)
+router.post('/api/expire-stale', async (req, res) => {
+  const db = requireDb(res);
+  if (!db) return;
+
+  const { data, error } = await db.rpc('expire_stale_zones');
+  if (error) return res.status(502).json({ error: error.message });
+  res.json({ expired: data || 0 });
 });
 
 // DELETE /admin/api/zones/:id — 실제 행 삭제

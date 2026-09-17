@@ -16,6 +16,8 @@ function mapZone(z) {
     safeVotes:    z.safe_votes    || 0,
     safeVoterIds: z.safe_voter_ids || [],
     status:       z.status        || 'active',
+    confirmation: z.confirmation  || 'unconfirmed',
+    reporterIds:  z.reporter_ids  || [],
     createdAt:    z.created_at
   };
 }
@@ -40,10 +42,6 @@ function _hav(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-function _uid(prefix) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 const API = {
 
   // ══ 위험구역 (활성 상태만 조회) ════════════════════════════════════════════
@@ -63,94 +61,41 @@ const API = {
   },
 
   // ══ 위험 신고 ═════════════════════════════════════════════════════════════
-  async reportHazard({ lat, lng, type, desc, severity, address }) {
-    const typeLabels = {
-      pothole:      '포트홀 / 크랙',
-      slippery:     '맨홀 / 미끄러움',
-      construction: '도로 / 보도 공사',
-      other:        '기타 위험'
-    };
-    const title = typeLabels[type] || '기타 위험';
-    const koreanDesc = `유저 제보: [${title}]${desc ? ' ' + desc : ''}`;
-    const { data: { user } } = await sb.auth.getUser();
-
-    await sb.from('reports').insert({
-      id:          _uid('rpt'),
-      user_id:     user?.id || null,
-      lat, lng, type, title,
-      description: koreanDesc,
-      severity:    severity || 'medium'
+  // 쓰기·검증(GPS정확도/중복/일일한도)·포인트·확인상태 판정을 모두 서버 RPC(submit_hazard_report)가 처리한다.
+  // 검증 실패 시 RPC 가 한국어 예외 메시지를 반환 → error.message 그대로 노출한다.
+  async reportHazard({ lat, lng, type, desc, severity, address, gpsAccuracy }) {
+    const { data, error } = await sb.rpc('submit_hazard_report', {
+      p_type:         type,
+      p_lat:          lat,
+      p_lng:          lng,
+      p_desc:         desc || '',
+      p_severity:     severity || 'medium',
+      p_address:      address || '',
+      p_gps_accuracy: (gpsAccuracy != null ? gpsAccuracy : null)
     });
-
-    const { data: zones } = await sb.from('zones').select('*').eq('status', 'active');
-    const nearby = (zones || []).find(z => _hav(z.lat, z.lng, lat, lng) < 100);
-
-    if (nearby) {
-      const newCount = (nearby.report_count || 0) + 1;
-      await sb.from('zones').update({ report_count: newCount }).eq('id', nearby.id);
-      return { action: 'updated', zone: mapZone({ ...nearby, report_count: newCount }) };
-    }
-
-    const { data: newZone, error } = await sb.from('zones').insert({
-      id:           _uid('zone'),
-      lat, lng, title, type,
-      description:  koreanDesc,
-      address:      address || '',
-      severity:     severity || 'medium',
-      report_count: 1,
-      safe_votes:   0,
-      safe_voter_ids: [],
-      status:       'active'
-    }).select().single();
-    if (error) throw error;
-    return { action: 'created', zone: mapZone(newZone) };
+    if (error) throw new Error(error.message || '신고 처리 중 오류가 발생했습니다');
+    return { action: data.action, zone: mapZone(data.zone) };
   },
 
   // ══ 안전 투표 (3인 자동 해제) ═════════════════════════════════════════════
+  // 중복 방지·집계·투표 포인트(+5)를 서버 RPC(cast_safety_vote)가 원자적으로 처리한다.
   async voteZoneSafe(zoneId) {
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) throw new Error('로그인이 필요합니다');
-
-    const { data: zone, error: zErr } = await sb.from('zones').select('*').eq('id', zoneId).single();
-    if (zErr) throw zErr;
-
-    const voterIds = zone.safe_voter_ids || [];
-    if (voterIds.includes(user.id)) throw new Error('이미 투표하셨습니다');
-
-    const newVotes    = (zone.safe_votes || 0) + 1;
-    const newVoterIds = [...voterIds, user.id];
-    const newStatus   = newVotes >= 3 ? 'cleared' : 'active';
-
-    const { data, error } = await sb.from('zones')
-      .update({ safe_votes: newVotes, safe_voter_ids: newVoterIds, status: newStatus })
-      .eq('id', zoneId)
-      .select()
-      .single();
-    if (error) throw error;
-    return { zone: mapZone(data), cleared: newStatus === 'cleared' };
-  },
-
-  // ══ 위험구역 해제 (관리자) ═════════════════════════════════════════════════
-  async clearZone(zoneId) {
-    const { error } = await sb.from('zones').update({ status: 'cleared' }).eq('id', zoneId);
-    if (error) throw error;
-    return { success: true, id: zoneId };
+    const { data, error } = await sb.rpc('cast_safety_vote', { p_zone_id: zoneId });
+    if (error) throw new Error(error.message || '투표 처리 중 오류');
+    return { zone: mapZone(data.zone), cleared: data.cleared };
   },
 
   // ══ 라이딩 기록 ════════════════════════════════════════════════════════════
+  // 저장 + 주행거리 포인트(누적 10km 경계 통과분)를 서버 RPC(record_ride)가 원자적으로 처리한다.
   async saveRide({ distance, duration, avgSpeed, maxSpeed, dangerZonesPassed, route }) {
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) throw new Error('로그인 후 라이딩을 저장할 수 있습니다');
-    const { data, error } = await sb.from('rides').insert({
-      id:                  _uid('ride'),
-      user_id:             user.id,
-      distance:            parseFloat(distance) || 0,
-      duration:            parseInt(duration)   || 0,
-      avg_speed:           parseFloat(avgSpeed) || 0,
-      max_speed:           parseFloat(maxSpeed) || 0,
-      danger_zones_passed: dangerZonesPassed || [],
-      route:               route || []
-    }).select().single();
+    const { data, error } = await sb.rpc('record_ride', {
+      p_distance_km:  parseFloat(distance) || 0,
+      p_duration:     parseInt(duration)   || 0,
+      p_avg_speed:    parseFloat(avgSpeed) || 0,
+      p_max_speed:    parseFloat(maxSpeed) || 0,
+      p_danger_zones: dangerZonesPassed || [],
+      p_route:        route || []
+    });
     if (error) throw error;
     return mapRide(data);
   },
@@ -167,39 +112,55 @@ const API = {
   },
 
   // ══ 사용자 프로필 ══════════════════════════════════════════════════════════
+  // 프로필 row 는 회원가입 시 서버 트리거(handle_new_user)가 자동 생성한다.
+  // RLS 로 클라이언트 직접 insert 가 막혀 있으므로 여기서는 조회만 한다.
+  // (트리거 이전에 가입한 유저 등 행이 없으면 기본값으로 표시)
   async getProfile() {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return null;
-    const { data, error } = await sb.from('profiles').select('*').eq('id', user.id).single();
-    if (error && error.code === 'PGRST116') {
-      const { data: np } = await sb.from('profiles').insert({
-        id: user.id,
-        name: user.user_metadata?.name || user.email.split('@')[0],
-        safety_points: 0, total_reports: 0, total_distance: 0
-      }).select().single();
-      return np || null;
-    }
-    return data || null;
+    const { data } = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle();
+    return data || {
+      id: user.id,
+      name: user.user_metadata?.name || user.email.split('@')[0],
+      safety_points: 0, total_reports: 0, total_distance: 0
+    };
   },
 
-  async addSafetyPoints(points, reportsDelta = 0, distanceDelta = 0) {
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return;
-    const { data: existing } = await sb.from('profiles').select('*').eq('id', user.id).single();
-    if (existing) {
-      await sb.from('profiles').update({
-        safety_points:  (existing.safety_points  || 0) + points,
-        total_reports:  (existing.total_reports  || 0) + reportsDelta,
-        total_distance: (existing.total_distance || 0) + distanceDelta,
-        updated_at:     new Date().toISOString()
-      }).eq('id', user.id);
-    } else {
-      await sb.from('profiles').insert({
-        id: user.id,
-        name: user.user_metadata?.name || user.email.split('@')[0],
-        safety_points: points, total_reports: reportsDelta, total_distance: distanceDelta
-      });
+  // 포인트 증감은 서버 RPC(submit_hazard_report / cast_safety_vote / record_ride)가
+  // 원자적으로 전담한다. 클라이언트는 더 이상 profiles 를 직접 UPDATE 하지 않는다.
+
+  // ══ 계정 삭제 (회원탈퇴) ════════════════════════════════════════════════════
+  // auth 계정 삭제는 service_role 권한이 필요하므로 Edge Function(delete-account)이 대행한다.
+  // reports 익명화 + rides 삭제 + auth 유저 삭제(profiles CASCADE)까지 서버에서 처리.
+  async deleteAccount() {
+    const { data, error } = await sb.functions.invoke('delete-account', { body: {} });
+    if (error) {
+      let msg = error.message;
+      try { msg = (await error.context?.json())?.error || msg; } catch {}
+      throw new Error(msg || '계정 삭제에 실패했습니다');
     }
+    if (data?.error) throw new Error(data.error);
+    return { success: true };
+  },
+
+  // ══ 피드백 루프 / 랭킹 (섹션 6·7) ═════════════════════════════════════════
+  // 안전 통과 카운트 — 라이딩 중 confirmed 마커 통과 시 호출(본인 신고 제외는 서버가 판정).
+  async recordZonePass(zoneId) {
+    await sb.rpc('record_zone_pass', { p_zone_id: zoneId });
+  },
+
+  // 내 신고가 만든 안전 통과 총합 (프로필 표시용)
+  async getMyImpact() {
+    const { data, error } = await sb.rpc('get_my_impact');
+    if (error) return { safePasses: 0, markerCount: 0 };
+    return { safePasses: data?.safePasses || 0, markerCount: data?.markerCount || 0 };
+  },
+
+  // 리포터 랭킹 (기여 포인트 상위)
+  async getLeaderboard(limit = 20) {
+    const { data, error } = await sb.rpc('get_leaderboard', { p_limit: limit });
+    if (error) return [];
+    return data || [];
   },
 
   // ══ 인증 ═══════════════════════════════════════════════════════════════════

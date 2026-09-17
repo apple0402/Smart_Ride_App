@@ -64,6 +64,13 @@ const Platform = {
 const SEV_COLORS  = { high: '#ef4444', medium: '#f97316', low: '#eab308' };
 const SEV_RADIUS  = { high: 80, medium: 60, low: 40 };
 
+// 마커 확인 상태별 표시(불투명도·크기·라벨) — 미확인/검토필요 마커는 흐리게 표시
+const CONF_STYLE = {
+  confirmed:     { opacity: 1.0,  size: 34, label: '✅ 확인된 위험' },
+  unconfirmed:   { opacity: 0.55, size: 27, label: '⏳ 미확인 제보' },
+  review_needed: { opacity: 0.35, size: 24, label: '🔍 검토 필요'  }
+};
+
 let allZones          = [];
 let alertedZones      = new Set();
 let enteredZones      = new Map(); // zoneId -> 진입 후 관측된 최소 거리(minDist), 이탈(투표창) 판정 기준점
@@ -467,12 +474,14 @@ function renderZones(zones) {
   zones.forEach(z => {
     const color  = SEV_COLORS[z.severity] || '#f97316';
     const radius = SEV_RADIUS[z.severity] || 60;
-    L.circle([z.lat, z.lng], { radius, color, fillColor: color, fillOpacity: 0.18, weight: 2 }).addTo(zoneLayer);
+    const conf   = CONF_STYLE[z.confirmation] || CONF_STYLE.confirmed;
+    const sz     = conf.size;
+    L.circle([z.lat, z.lng], { radius, color, fillColor: color, fillOpacity: 0.18 * conf.opacity, weight: 2, opacity: conf.opacity }).addTo(zoneLayer);
 
     const icon = L.divIcon({
       className: '',
-      html: `<div style="background:${color};border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:15px;border:2px solid white;box-shadow:0 2px 10px rgba(0,0,0,0.6)">${ZONE_ICONS[z.type] || '⚠️'}</div>`,
-      iconSize: [34, 34], iconAnchor: [17, 17]
+      html: `<div style="background:${color};border-radius:50%;width:${sz}px;height:${sz}px;display:flex;align-items:center;justify-content:center;font-size:15px;border:2px solid white;box-shadow:0 2px 10px rgba(0,0,0,0.6);opacity:${conf.opacity}">${ZONE_ICONS[z.type] || '⚠️'}</div>`,
+      iconSize: [sz, sz], iconAnchor: [sz/2, sz/2]
     });
 
     // 마커 클릭 시 상세 팝업 (주소는 비동기 로딩)
@@ -481,6 +490,7 @@ function renderZones(zones) {
     popupDiv.style.cssText = 'min-width:200px;max-width:260px;font-size:13px;line-height:1.6';
     popupDiv.innerHTML = `
       <div style="font-weight:800;font-size:15px;margin-bottom:6px">${ZONE_ICONS[z.type]||'⚠️'} ${escHtml(zoneLabel(z))}</div>
+      <div style="font-size:11px;margin-bottom:4px;color:#cbd5e1">${conf.label}</div>
       <div style="color:#94a3b8;margin-bottom:3px;font-size:11px">📍 <span id="popup-addr-${z.id}">주소 조회 중…</span></div>
       <div style="color:#64748b;font-size:11px;margin-bottom:3px">📅 ${formatDate(z.createdAt)}</div>
       <div style="color:#86efac;font-size:11px;margin-bottom:6px">✅ 이젠 안전해요 (${z.safeVotes||0} / 3명 완료)</div>
@@ -603,6 +613,8 @@ function checkProximity(lat, lng) {
           // [5차 수정] 이 구역은 이번 통과에서 소진(First Win) — 표시 여부와 무관하게 잠근다.
           // 이미 투표한 구역도 함께 잠가야 재진입 시 알림·배너가 반복되지 않는다.
           lockZoneVote(z.id);
+          // 피드백 루프(섹션 7): confirmed 마커를 안전하게 지나친 순간 카운트(본인 신고 제외는 서버가 처리)
+          if (Auth.user && z.confirmation === 'confirmed') API.recordZonePass(z.id).catch(() => {});
           if (!alreadyVoted) VotePopup.show(z);
         }
       }
@@ -907,7 +919,7 @@ const GPS = {
     } else {
       riderMarker.setLatLng([lat, lng]);
     }
-    this.lastPos = { lat, lng };
+    this.lastPos = { lat, lng, accuracy };
     updateNearbyCount();
 
     // 정확도 원
@@ -1100,19 +1112,13 @@ const Ride = {
         ? Math.round(this.speedHistory.reduce((a, b) => a + b, 0) / this.speedHistory.length)
         : 0;
       try {
+        // record_ride RPC가 라이딩 저장 + total_distance 누적 + 주행거리 포인트(누적 10km 경계 통과분)를
+        // 원자적으로 처리한다. 9km씩 여러 번 타도 누적 10km를 넘는 순간 포인트가 지급된다.
         await API.saveRide({
           distance: this.distance / 1000, duration: this.elapsed,
           avgSpeed: avg, maxSpeed: this.maxSpeed,
           dangerZonesPassed: this.passedZones, route: this.routeCoords.slice(0, 200)
         });
-        // 주행 거리 포인트 (+5pt/10km) + total_distance 갱신
-        // distKm > 0 조건: 거리 누적은 포인트 여부와 무관하게 항상 업데이트
-        // 버그 수정: ptFromDist > 0 조건이면 10km 미만 라이딩은 total_distance가 전혀 갱신 안 됨
-        const distKm = this.distance / 1000;
-        const ptFromDist = Math.floor(distKm / 10) * 5;
-        if (distKm > 0 && Auth.user) {
-          API.addSafetyPoints(ptFromDist, 0, distKm).catch(() => {});
-        }
         Toast.show(`라이딩 저장 완료! ${(this.distance/1000).toFixed(2)} km`);
       } catch (e) {
         Toast.show('라이딩 저장 실패 (로그인 확인)');
@@ -1271,8 +1277,7 @@ const VotePopup = {
           if (z) { z.safeVotes = result.zone.safeVotes; z.safeVoterIds = result.zone.safeVoterIds; }
           Toast.show(`안전 투표 완료 (${result.zone.safeVotes}/3)`);
         }
-        // 안전 투표 포인트
-        API.addSafetyPoints(5).catch(() => {});
+        // 안전 투표 포인트(+5)는 cast_safety_vote RPC가 서버에서 지급한다.
       } catch (e) {
         Toast.show(e.message || '투표 처리 중 오류');
       }
@@ -1381,7 +1386,8 @@ const Report = {
 
       const result = await API.reportHazard({
         lat: pos.lat, lng: pos.lng,
-        type: this.selectedType, severity: this.selectedSev, desc, address
+        type: this.selectedType, severity: this.selectedSev, desc, address,
+        gpsAccuracy: pos.accuracy
       });
 
       if (result.action === 'created') {
@@ -1390,8 +1396,9 @@ const Report = {
         ZoneList.render();
         document.getElementById('danger-count-text').textContent = `주변 ${allZones.length}개 위험`;
       } else {
-        const z = allZones.find(z => z.id === result.zone.id);
-        if (z) { z.reportCount = result.zone.reportCount; renderZones(allZones); }
+        // 기존 zone 갱신 — reportCount/confirmation(승격 여부) 등 최신 상태로 통째 교체
+        const idx = allZones.findIndex(z => z.id === result.zone.id);
+        if (idx !== -1) { allZones[idx] = result.zone; renderZones(allZones); }
       }
 
       const rIcon = L.divIcon({
@@ -1402,11 +1409,12 @@ const Report = {
       L.marker([pos.lat, pos.lng], { icon: rIcon }).addTo(reportLayer)
        .bindPopup(`<div style="font-size:12px">${ZONE_ICONS[this.selectedType]||'⚠️'} ${ZONE_KOREAN[this.selectedType] || '위험'}</div>`);
 
-      // 신고 포인트 +10
-      API.addSafetyPoints(10, 1, 0).catch(() => {});
-
+      // 신고 포인트(+10)와 total_reports 증가는 submit_hazard_report RPC가 서버에서 처리한다.
       Panels.closeAll();
-      Toast.show('신고 제출 완료! 감사합니다 🙏');
+      // 확인 상태에 따라 안내 문구 분기 (미확인 제보는 다른 라이더 확인 후 정식 표시됨)
+      Toast.show(result.zone.confirmation === 'confirmed'
+        ? '신고 제출 완료! 감사합니다 🙏'
+        : '신고 접수 완료! 다른 라이더의 확인을 거쳐 정식 표시됩니다 🙏');
       document.getElementById('report-desc').value = '';
       this.selectedType = null; this.selectedSev = 'medium';
       document.querySelectorAll('#report-type-grid .type-btn').forEach(b => b.classList.remove('selected'));
@@ -1414,7 +1422,8 @@ const Report = {
         b.classList.toggle('selected', b.dataset.sev === 'medium');
       });
     } catch (e) {
-      Toast.show('신고 제출 실패. 연결 상태를 확인해 주세요.');
+      // 서버 검증 실패(위치 정확도/중복/일일 한도 등)는 RPC 의 한국어 메시지를 그대로 안내한다.
+      Toast.show(e.message || '신고 제출 실패. 연결 상태를 확인해 주세요.');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '신고 제출'; }
     }
@@ -1463,7 +1472,7 @@ const Panels = {
     document.getElementById('panel-overlay').classList.add('open');
   },
   closeAll() {
-    ['zone-list-panel','report-panel','settings-panel','history-panel','auth-panel','profile-panel']
+    ['zone-list-panel','report-panel','settings-panel','history-panel','auth-panel','profile-panel','ranking-panel']
       .forEach(id => document.getElementById(id).classList.remove('open'));
     document.getElementById('panel-overlay').classList.remove('open');
   },
@@ -1521,8 +1530,60 @@ const Profile = {
         document.getElementById('profile-level-bar').style.width  = '100%';
         document.getElementById('profile-next-level').textContent = '최고 레벨 달성! 🌟';
       }
+
+      // 등급별 보상(섹션 6): Lv.3 이상 "검증된 리포터" 배지
+      document.getElementById('profile-badge').classList.toggle('hidden', lv.level < 3);
     } catch (e) {
       document.getElementById('profile-points').textContent = '?';
+    }
+
+    // 피드백 루프(섹션 7): 내 신고가 만든 안전 통과 합계
+    try {
+      const impact = await API.getMyImpact();
+      const card = document.getElementById('profile-impact-card');
+      if (impact.safePasses > 0) {
+        document.getElementById('profile-impact').innerHTML =
+          `🛡️ 당신의 신고 덕분에 라이더들이<br><b class="text-green-200">${impact.safePasses}회</b> 안전하게 지나갔어요`;
+        card.classList.remove('hidden');
+      } else {
+        card.classList.add('hidden');
+      }
+    } catch (e) {}
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Ranking 모듈 (섹션 6 — 리포터 랭킹)
+// ═══════════════════════════════════════════════════════════════════════════
+const Ranking = {
+  async open() {
+    Panels._open('ranking-panel');
+    const el = document.getElementById('ranking-list');
+    el.innerHTML = '<div class="text-slate-500 text-sm text-center py-8">불러오는 중…</div>';
+    try {
+      const rows = await API.getLeaderboard(20);
+      if (!rows.length) {
+        el.innerHTML = '<div class="text-slate-500 text-sm text-center py-8">아직 랭킹 데이터가 없습니다.</div>';
+        return;
+      }
+      const medals = ['🥇','🥈','🥉'];
+      el.innerHTML = rows.map((r, i) => {
+        const lv = getLevelInfo(r.points || 0);
+        const rank = medals[i] || `<span class="text-slate-500 font-bold">${i + 1}</span>`;
+        return `<div class="flex items-center gap-3 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5">
+          <div class="w-6 text-center text-lg">${rank}</div>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-white truncate">${escHtml(r.name || '익명 라이더')}</div>
+            <div class="text-[11px] text-slate-400">${lv.emoji} ${lv.name} · 확인 신고 ${r.confirmed_reports || 0}건</div>
+          </div>
+          <div class="text-right">
+            <div class="text-sm font-black text-amber-300">${r.contribution_points || 0}</div>
+            <div class="text-[10px] text-slate-500">기여 pt</div>
+          </div>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      el.innerHTML = '<div class="text-slate-500 text-sm text-center py-8">랭킹을 불러오지 못했습니다.</div>';
     }
   }
 };
@@ -1732,6 +1793,26 @@ const Auth = {
     await API.logout();
     Panels.closeAll();
     Toast.show('로그아웃 완료');
+  },
+
+  // 회원탈퇴 — 확인 다이얼로그 → Edge Function 대행 삭제 → 세션 종료 → 로그인 화면
+  async deleteAccount() {
+    if (!this.user) return;
+    if (!confirm('정말 탈퇴하시겠습니까?\n계정과 라이딩 기록이 영구 삭제되며 되돌릴 수 없습니다.\n(내가 등록한 위험 마커는 다른 라이더를 위해 익명으로 유지됩니다)')) return;
+
+    const btn = document.getElementById('delete-account-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '탈퇴 처리 중...'; }
+    try {
+      await API.deleteAccount();
+      await API.logout();               // 세션 즉시 종료
+      Panels.closeAll();
+      Toast.show('계정이 삭제되었습니다. 그동안 이용해 주셔서 감사합니다.');
+      Panels._open('auth-panel');       // 로그인 화면으로 이동
+    } catch (e) {
+      Toast.show(e.message || '계정 삭제에 실패했습니다. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '회원탈퇴'; }
+    }
   },
 
   _updateUI() {

@@ -77,6 +77,7 @@
         <p id="count">불러오는 중…</p>
         <!-- 임시 도구: 주소가 비어 있는 과거 마커를 좌표로 역지오코딩해 채운다 -->
         <button id="repair" class="btn-ghost" style="margin-top:10px;padding:8px;font-size:12px">🛠️ 과거 마커 주소 일괄 복원</button>
+        <button id="expire" class="btn-ghost" style="margin-top:6px;padding:8px;font-size:12px">🕒 90일 무활동 마커 정리</button>
       </header>
       <div class="body" id="panel"></div>
     </aside>
@@ -249,6 +250,27 @@ function renderDetail() {
   const saveBtn = el('button', { className:'btn-save', textContent:'💾 저장' });
   const delBtn  = el('button', { className:'btn-del',  textContent:'🚨 마커 삭제' });
 
+  // 공사 종료 수동 처리 — 공사 구간(construction)이면서 아직 활성 상태인 마커에만 노출
+  let closeBtn = null;
+  if (s(z.type) === 'construction' && s(z.status) !== 'expired') {
+    closeBtn = el('button', { className:'btn-ghost', textContent:'🚧 공사 종료 처리 (지도에서 숨김)',
+      style:'margin-top:8px' });
+    closeBtn.onclick = async () => {
+      if (!confirm('이 공사 구간을 종료 처리할까요?\n지도에서 즉시 숨겨집니다.')) return;
+      saveBtn.disabled = delBtn.disabled = closeBtn.disabled = true;
+      try {
+        const r = await api(`/admin/api/zones/${encodeURIComponent(z.id)}/close`, 'POST');
+        Object.assign(z, r.zone);
+        renderMarkers();
+        renderDetail();
+        toast('공사 종료 처리했습니다.');
+      } catch (e) {
+        toast(e.message, true);
+        saveBtn.disabled = delBtn.disabled = closeBtn.disabled = false;
+      }
+    };
+  }
+
   saveBtn.onclick = async () => {
     const title = titleInput.value.trim();
     if (!title) return toast('제목은 비울 수 없습니다.', true);
@@ -290,10 +312,11 @@ function renderDetail() {
   const coords  = (Number.isFinite(Number(z.lat)) && Number.isFinite(Number(z.lng)))
     ? `${Number(z.lat).toFixed(6)}, ${Number(z.lng).toFixed(6)}` : '';
 
-  panel.replaceChildren(
+  panel.replaceChildren(...[
     field('고유 ID', z.id),
     field('한글 주소', z.address, '(주소 정보 없음 — 과거에 등록된 마커입니다)'),
     field('유형', ZONE_LABELS[typeKey] || typeKey, '(유형 없음)'),
+    field('상태', `${s(z.status) || 'active'} / ${s(z.confirmation) || '-'}`),
     field('좌표', coords),
     field('제보 수', s(z.report_count)),
     field('등록 일시', createdText),
@@ -302,8 +325,9 @@ function renderDetail() {
     el('div', { className:'row' }, [el('label', { textContent:'설명 (description)' }), descInput]),
     el('div', { className:'row' }, [el('label', { textContent:'위험도 (severity)' }), sevSelect]),
     saveBtn,
+    closeBtn,
     delBtn
-  );
+  ].filter(Boolean));
 }
 
 // ── 통신 ──────────────────────────────────────────────────────────────────────
@@ -380,6 +404,22 @@ repairBtn.onclick = async () => {
   } catch (e) {
     toast(e.message, true);
     watchRepair(false);   // 409(이미 진행 중)면 진행률 표시로 이어진다
+  }
+};
+
+// 90일 무활동 마커 일괄 만료
+document.getElementById('expire').onclick = async () => {
+  const btn = document.getElementById('expire');
+  if (!confirm('90일간 신규 신고·투표가 없는 활성 마커를 일괄 종료(expired)합니다.\n계속할까요?')) return;
+  btn.disabled = true;
+  try {
+    const r = await api('/admin/api/expire-stale', 'POST');
+    toast(`오래된 마커 ${r.expired || 0}건을 정리했습니다.`);
+    load();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
   }
 };
 
