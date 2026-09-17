@@ -110,9 +110,11 @@ const checks = [
   ['5분 내 동일 유형·근접 중복 신고 → 거부', async () => {
     if (!admin) return 'skip';
     const u = state.users[0]; const p = at(1); // 스텝3과 동일 좌표/유형
+    // 실제 RPC 예외 메시지는 '방금 같은 위험을 신고하셨습니다' — GPS/일일한도 등 다른 거부와
+    // 구분되도록 이 문구('방금')로 검사한다(중복 규칙으로 거부됐는지까지 확인).
     await expectRpcError(u.cli, 'submit_hazard_report',
       { p_type:'pothole', p_lat:p.lat, p_lng:p.lng, p_desc:'', p_severity:'medium', p_address:'', p_gps_accuracy: 10 },
-      '중복');
+      '방금');
   }],
 
   ['서로 다른 2인 신고 → confirmed 승격 + 각 +7', async () => {
@@ -151,11 +153,20 @@ const checks = [
   ['주행거리 누적 포인트(9km×2 → 10km 경계 +5)', async () => {
     if (!admin) return 'skip';
     const u = state.users[1];
-    const before = (await admin.from('profiles').select('activity_points,distance_points_paid').eq('id', u.id).single()).data;
-    await u.cli.rpc('record_ride', { p_distance_km: 9, p_duration: 100, p_avg_speed: 15, p_max_speed: 20, p_danger_zones: [], p_route: [] });
-    await u.cli.rpc('record_ride', { p_distance_km: 9, p_duration: 100, p_avg_speed: 15, p_max_speed: 20, p_danger_zones: [], p_route: [] });
-    const after = (await admin.from('profiles').select('activity_points,distance_points_paid,total_distance').eq('id', u.id).single()).data;
-    const gained = (after.activity_points||0) - (before?.activity_points||0);
+    const b = await admin.from('profiles').select('activity_points,distance_points_paid').eq('id', u.id).single();
+    // 컬럼 미존재/조회 에러를 삼키지 않고 원인을 드러낸다(널 크래시 방지).
+    ok(!b.error, `프로필 조회(before) 에러: ${b.error && b.error.message}`);
+    const before = b.data;
+
+    const r1 = await u.cli.rpc('record_ride', { p_distance_km: 9, p_duration: 100, p_avg_speed: 15, p_max_speed: 20, p_danger_zones: [], p_route: [] });
+    ok(!r1.error, `record_ride #1 에러: ${r1.error && r1.error.message}`);
+    const r2 = await u.cli.rpc('record_ride', { p_distance_km: 9, p_duration: 100, p_avg_speed: 15, p_max_speed: 20, p_danger_zones: [], p_route: [] });
+    ok(!r2.error, `record_ride #2 에러: ${r2.error && r2.error.message}`);
+
+    const a = await admin.from('profiles').select('activity_points,distance_points_paid,total_distance').eq('id', u.id).single();
+    ok(!a.error, `프로필 조회(after) 에러: ${a.error && a.error.message}`);
+    ok(a.data, `프로필 row 없음(after) — 트리거 미설치 또는 record_ride 롤백 의심`);
+    const gained = (a.data.activity_points || 0) - (before?.activity_points || 0);
     ok(gained >= 5, `누적 18km인데 활동 포인트 증가분이 ${gained} (>=5 기대)`);
   }],
 
@@ -192,7 +203,21 @@ const checks = [
     await u.cli.rpc('record_ride', { p_distance_km: 3, p_duration: 60, p_avg_speed: 12, p_max_speed: 18, p_danger_zones: [], p_route: [] });
 
     const del = await u.cli.functions.invoke('delete-account', { body: {} });
-    ok(!del.error, 'delete-account 호출 에러: ' + (del.error && del.error.message));
+    if (del.error) {
+      // FunctionsHttpError 는 message 가 일반적("non-2xx")이라 실제 원인이 안 보인다.
+      // 함수가 반환한 JSON 본문({ error, step })을 꺼내 실제 단계·사유를 노출한다.
+      let detail = del.error.message || '알 수 없는 오류';
+      try {
+        const ctx = del.error.context;
+        if (ctx && typeof ctx.json === 'function') {
+          const body = await ctx.json();
+          if (body && (body.error || body.step)) {
+            detail += ` | step=${body.step || '?'} · ${body.error || ''}`;
+          }
+        }
+      } catch (_) { /* 본문 파싱 실패는 무시하고 일반 메시지만 사용 */ }
+      ok(false, 'delete-account 호출 에러: ' + detail);
+    }
 
     // 검증(service): reports.user_id NULL 익명화, rides 0건, profiles 0건, 재로그인 실패
     const rep2 = await admin.from('reports').select('id').eq('user_id', u.id);
@@ -222,6 +247,59 @@ const MANUAL = [
   '상황실 UI: "90일 무활동 마커 정리" 버튼 동작(위 RPC는 자동 검증됨)',
 ];
 
+// 프리플라이트: 서비스 키가 PostgREST 에서 실제로 RLS 를 우회하는지(=service_role 로 인식되는지)
+// 확인한다. GoTrue admin(createUser)은 되는데 profiles select 가 비면 원인이 갈리므로, insert 로
+// 트리거 부재 vs 키(RLS 우회) 문제를 구분해 명확한 메시지로 즉시 중단한다.
+async function preflight() {
+  if (!admin) return;
+  const email = `smoke-preflight+${rand()}@example.com`;
+  const cr = await admin.auth.admin.createUser({ email, password: 'Pf#' + rand() + 'A1', email_confirm: true });
+  if (cr.error) die('서비스 키로 유저 생성 실패(권한 문제): ' + cr.error.message);
+  const uid = cr.data.user.id;
+  try {
+    const seen = await admin.from('profiles').select('id').eq('id', uid);
+    if (seen.error) die(`서비스 키 PostgREST 접근 에러: ${seen.error.message}\n   → STAGING_SERVICE_KEY 가 secret/service_role 키인지 확인하세요.`);
+    if (!seen.data || !seen.data.length) {
+      // 조회가 비었다: 키(RLS 우회) 문제인지 트리거 부재인지 admin insert 로 판별
+      const ins = await admin.from('profiles').insert({ id: uid, name: 'preflight' });
+      if (ins.error) {
+        die('STAGING_SERVICE_KEY 가 RLS 를 우회하지 못합니다(service_role 미인식) — 이것이 [7][8][9] 실패의 원인입니다.\n' +
+            `   profiles insert 도 거부됨: ${ins.error.message}\n` +
+            '   → 새 형식이면 sb_secret_ (publishable 아님), 레거시면 service_role (anon 아님) 키인지,\n' +
+            '     그리고 프로젝트/클라이언트가 새 API 키를 PostgREST 에서 지원하는지 확인하세요.');
+      }
+      console.warn('⚠️  on_auth_user_created 트리거가 프로필을 자동 생성하지 않습니다(마이그레이션 (a) 섹션 미적용 의심). 서비스 키 자체는 정상.');
+    }
+  } finally {
+    await admin.auth.admin.deleteUser(uid).catch(() => {});
+  }
+}
+
+// 실행 전 정리: 이전 실행 잔여 데이터가 테스트 좌표에 남아 있으면 신규 신고가 기존 마커에
+// 병합(action=updated)되거나 이미 confirmed 인 마커에 붙어 [3]/[6]/[9] 가 오탐한다.
+// 실좌표 데이터 보호를 위해 각 테스트 지점(at 0..7) ±0.002도(약 220m) 만 좁게 지운다.
+async function preclean() {
+  if (!admin) return;
+  const d = 0.002;
+  try {
+    for (let i = 0; i <= 7; i++) {
+      const p = at(i);
+      const box = (q) => q.gte('lat', p.lat - d).lte('lat', p.lat + d).gte('lng', p.lng - d).lte('lng', p.lng + d);
+      await box(admin.from('zones').delete());
+      await box(admin.from('reports').delete());
+    }
+    // 이전 실행에서 남은 smoke 테스트 유저 정리(profiles/데이터는 CASCADE·좌표정리로 처리됨)
+    for (let page = 1; page <= 20; page++) {
+      const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+      if (error || !data || !data.users.length) break;
+      for (const su of data.users) {
+        if ((su.email || '').startsWith('smoke+')) await admin.auth.admin.deleteUser(su.id).catch(() => {});
+      }
+      if (data.users.length < 200) break;
+    }
+  } catch (e) { console.warn('사전 정리 경고:', e.message); }
+}
+
 async function cleanup() {
   if (!admin) return;
   try {
@@ -235,16 +313,25 @@ async function cleanup() {
 
 (async () => {
   const only = process.argv.slice(2).map(Number).filter(n => !isNaN(n));
+  // 의존 스텝 자동 선행: 스텝들은 공유 state(유저/zone)에 의존하므로, 특정 번호만 요청해도
+  // 그 앞 스텝(1..max)을 조용히 먼저 실행해 상태를 만든다. 집계/출력은 요청 번호만 한다.
+  const maxN = only.length ? Math.max(...only) : checks.length;
   console.log(`\n🧪 Safe Ride 스테이징 스모크 테스트 — ${URL}\n`);
+  await preflight();  // 서비스 키 RLS 우회 여부 선검사(문제면 명확한 메시지로 중단)
+  await preclean();   // 이전 실행 잔여 데이터 정리(테스트 좌표 주변만)
   for (let i = 0; i < checks.length; i++) {
+    const n = i + 1;
+    if (n > maxN) break;                         // 요청 최대 번호 이후는 실행하지 않음
     const [name, fn] = checks[i];
-    if (only.length && !only.includes(i + 1)) continue;
-    process.stdout.write(`  [${String(i + 1).padStart(2)}] ${name} … `);
+    const target = !only.length || only.includes(n);
+    if (target) process.stdout.write(`  [${String(n).padStart(2)}] ${name} … `);
     try {
       const r = await fn();
+      if (!target) continue;                     // 선행(의존) 스텝: 상태만 만들고 집계 제외
       if (r === 'skip') { state.skip++; console.log('⏭️  SKIP(서비스 키 필요)'); }
       else { state.pass++; console.log('✅ PASS'); }
     } catch (e) {
+      if (!target) { console.warn(`  ↳ 선행 [${n}] ${name} 경고: ${e.message}`); continue; }
       state.fail++; console.log('❌ FAIL\n        → ' + e.message);
     }
   }
