@@ -21,10 +21,15 @@ L.tileLayer(CARTO_TILE_URL, { maxZoom: 19, apiKey: CARTO_API_KEY }).addTo(map);
 // 줌 버튼, 내 위치 버튼 모두 제거 — GPS 자동 추적으로 대체
 
 // ── 라이더 마커 ────────────────────────────────────────────────────────────────
+// 방향성 화살표(진행방향 표시). SVG는 rotation 0 일 때 "위쪽(북/화면상단)"을 가리킨다.
+// leaflet-rotate 가 iconAnchor(=중심)를 transform-origin 으로 잡아 회전하므로 위치가 틀어지지 않는다.
+// 색/글로우는 기존 다크 테마 + 초록 계열을 유지한다.
 const riderIcon = L.divIcon({
   className: '',
-  html: `<div style="width:22px;height:22px;background:#22c55e;border:3px solid white;border-radius:50%;box-shadow:0 0 0 5px rgba(34,197,94,0.35)"></div>`,
-  iconSize: [22, 22], iconAnchor: [11, 11]
+  html: `<svg width="28" height="28" viewBox="0 0 28 28" style="display:block;overflow:visible;filter:drop-shadow(0 0 4px rgba(34,197,94,0.55))">
+    <path d="M14 2 L22 24 L14 18.5 L6 24 Z" fill="#22c55e" stroke="#f8fafc" stroke-width="1.3" stroke-linejoin="round"/>
+  </svg>`,
+  iconSize: [28, 28], iconAnchor: [14, 14]
 });
 // GPS 수신 전에는 마커를 지도에 올리지 않음 — null 로 대기, onPosition 첫 호출 시 생성
 let riderMarker = null;
@@ -757,6 +762,7 @@ const GPS = {
   _targetBearing:    0,       // 목표 방향각 (이동 평균 결과)
   _currentBearing:   0,       // 현재 표시 방향각 (LERP 중간값)
   _bearingAnimFrame: null,    // requestAnimationFrame 핸들
+  _markerRotDeg:     0,       // 마커 아이콘에 현재 적용된 회전각(도) — 중복 갱신 방지용
 
   // ── iOS PWA 전용: 시스템에 "GPS 필수 앱" 신호를 먼저 쏘는 강제 트리거 ───────
   // 앱 마운트 직후 짧은 타임아웃으로 getCurrentPosition을 한 번 선제 호출.
@@ -910,12 +916,20 @@ const GPS = {
       sendSwMessage({ type: 'GPS_POSITION', lat, lng });
     }
     this._applyPosition(lat, lng, kmh, accuracy);
+    // 진행방향/거리 계산용 직전 좌표는 주행 여부와 무관하게 갱신한다.
+    // (비주행=북쪽 고정 상태에서도 마커가 GPS 진행방향으로 회전할 수 있도록.
+    //  _applyPosition 안의 거리 계산은 이 갱신 이전 값을 읽으므로 순서가 중요하다.)
+    this._prevPos = { lat, lng };
   },
 
   _applyPosition(lat, lng, rawKmh, accuracy) {
     // GPS 첫 수신 시 마커 생성 (하드코딩 기본 위치 없음)
     if (!riderMarker) {
-      riderMarker = L.marker([lat, lng], { icon: riderIcon, zIndexOffset: 10000 }).addTo(map);
+      // rotateWithView:false — 지도가 회전해도 마커는 화면 기준으로 유지된다.
+      //   헤딩업(주행) 시: 지도가 진행방향으로 돌고 마커는 rotation 0(위쪽) = 진행방향.
+      //   북쪽 고정(비주행) 시: 마커 rotation 값 자체를 진행방향으로 돌린다.
+      riderMarker = L.marker([lat, lng], { icon: riderIcon, zIndexOffset: 10000, rotation: 0, rotateWithView: false }).addTo(map);
+      this._setMarkerRotation(this._markerRotDeg);
     } else {
       riderMarker.setLatLng([lat, lng]);
     }
@@ -946,16 +960,15 @@ const GPS = {
     // 항상 근접 감지 (라이딩 여부와 무관하게 경고 동작)
     checkProximity(lat, lng);
 
-    // 헤드업 지도 회전 — GPS 좌표 베어링 + 이동 평균 필터 + LERP 애니메이션
-    // 시속 3km/h 이하(정지·정차)일 때는 베어링 갱신을 건너뛰어 마지막 회전각을 유지(Lock) — 제자리 회전 방지
-    if (Ride.active && this._lastHeading != null && (rawKmh == null || rawKmh > 3)) {
-      if (map.setBearing) {
-        // 이동 평균 버퍼에 추가 (최근 5개로 원형 평균 — GPS 튐 완화)
-        this._headingBuffer.push(this._lastHeading);
-        if (this._headingBuffer.length > 5) this._headingBuffer.shift();
-        this._targetBearing = circularMean(this._headingBuffer);
-        this._startBearingAnim();
-      }
+    // 진행방향(베어링) 갱신 — 주행/비주행 공통. GPS 좌표 베어링 + 이동 평균 필터 + LERP 애니메이션.
+    // 시속 3km/h 이하(정지·정차)이거나 헤딩이 없을 때는 갱신을 건너뛰어 마지막 방향을 유지(Lock) — 제자리 회전 방지.
+    // 실제 적용(지도 회전 vs 마커 회전)은 LERP 스텝이 호출하는 _applyBearing 에서 Ride.active 로 분기한다.
+    if (this._lastHeading != null && (rawKmh == null || rawKmh > 3)) {
+      // 이동 평균 버퍼에 추가 (최근 5개로 원형 평균 — GPS 튐 완화)
+      this._headingBuffer.push(this._lastHeading);
+      if (this._headingBuffer.length > 5) this._headingBuffer.shift();
+      this._targetBearing = circularMean(this._headingBuffer);
+      this._startBearingAnim();
     }
 
     if (!Ride.active) return;
@@ -965,7 +978,7 @@ const GPS = {
       const d = haversine(this._prevPos.lat, this._prevPos.lng, lat, lng);
       if (d < 500) Ride.addDistance(d);
     }
-    this._prevPos = { lat, lng };
+    // _prevPos 갱신은 onPosition 말미로 이동(주행/비주행 공통 처리) — 여기서는 대입하지 않는다.
 
     // 속도 스무딩
     if (rawKmh != null) {
@@ -991,16 +1004,41 @@ const GPS = {
       const diff = ((this._targetBearing - this._currentBearing + 540) % 360) - 180;
       if (Math.abs(diff) < 0.3) {
         this._currentBearing = this._targetBearing;
-        map.setBearing(this._currentBearing);
+        this._applyBearing(this._currentBearing);
         this._bearingAnimFrame = null;
         return;
       }
       // LERP factor 0.12: 빠른 응답 + 과도한 진동 억제 균형
       this._currentBearing = (this._currentBearing + diff * 0.12 + 360) % 360;
-      map.setBearing(this._currentBearing);
+      this._applyBearing(this._currentBearing);
       this._bearingAnimFrame = requestAnimationFrame(step);
     };
     this._bearingAnimFrame = requestAnimationFrame(step);
+  },
+
+  // ── 베어링 적용 분기 — "지도를 돌릴지 / 마커를 돌릴지" ────────────────────────
+  // 지도 회전 여부에 따라 마커의 회전 기준이 달라진다.
+  //  · 주행 중(Ride.active) = 헤딩업: 지도를 진행방향으로 회전시키고, 마커 아이콘은
+  //    화면상 위쪽(0°)에 고정한다. (rotateWithView:false 라 지도가 돌아도 마커는
+  //    화면 기준으로 똑바로 유지되므로, rotation 0 이 곧 "진행방향"이 된다.)
+  //  · 비주행 = 북쪽 고정: 지도는 그대로 두고 마커 아이콘 자체를 진행방향으로 회전시킨다.
+  _applyBearing(deg) {
+    if (Ride.active) {
+      if (map.setBearing) map.setBearing(deg);   // 헤딩업: 지도 회전
+      this._setMarkerRotation(0);                 // 마커는 위쪽(진행방향) 고정
+    } else {
+      this._setMarkerRotation(deg);               // 북쪽 고정 지도 위에서 마커가 진행방향으로 회전
+    }
+  },
+
+  // 마커 아이콘 회전. leaflet-rotate 의 rotation 옵션은 라디안 단위이며, transform-origin 이
+  // 아이콘 앵커(중심)로 잡혀 있어 회전해도 위치 앵커가 틀어지지 않는다. 값이 실제로 바뀔 때만
+  // 갱신해 매 프레임 불필요한 리렌더/떨림을 방지한다.
+  _setMarkerRotation(deg) {
+    if (!riderMarker || typeof riderMarker.setRotation !== 'function') return;
+    if (this._markerRotDeg === deg) return;
+    this._markerRotDeg = deg;
+    riderMarker.setRotation(deg * Math.PI / 180);
   },
 
   _setGpsUI(state) {
@@ -1097,8 +1135,13 @@ const Ride = {
 
     // 지도 베어링 리셋 (북쪽 위) + LERP 애니메이션 취소
     if (GPS._bearingAnimFrame) { cancelAnimationFrame(GPS._bearingAnimFrame); GPS._bearingAnimFrame = null; }
+    // 헤딩업 종료 → 북쪽 고정 지도로 전환. 이때 마커는 마지막 진행방향을 그대로 유지시켜
+    // 화살표가 갑자기 북쪽으로 초기화되지 않게 한다(주행 중엔 마커 rotation 0=위쪽이었으므로,
+    // 북쪽 고정 지도에선 실제 마지막 헤딩값으로 마커를 돌려줘야 진행방향이 보존된다).
+    const lastDeg = GPS._lastHeading != null ? GPS._lastHeading : GPS._currentBearing;
     GPS._headingBuffer = []; GPS._currentBearing = 0; GPS._targetBearing = 0;
     if (map.setBearing) map.setBearing(0);
+    GPS._setMarkerRotation(lastDeg);
 
     const btn = document.getElementById('ride-btn');
     btn.textContent = '라이딩 시작';
