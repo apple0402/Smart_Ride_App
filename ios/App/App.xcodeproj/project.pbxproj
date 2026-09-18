@@ -163,6 +163,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 504EC3161FED79650016851F /* Build configuration list for PBXNativeTarget "App" */;
 			buildPhases = (
+				CA9C0091DEADBEEF00000001 /* [CAP] Sync web assets (cap copy) */,
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
@@ -267,6 +268,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		CA9C0091DEADBEEF00000001 /* [CAP] Sync web assets (cap copy) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "[CAP] Sync web assets (cap copy)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Capacitor 웹 자산 자동 동기화 — Compile Sources 이전 단계에서 실행됨.\n# public/ 을 수정한 뒤 cap copy 를 깜빡해도 Xcode 빌드 시 자동 반영되게 한다.\n# GUI Xcode 는 nvm/homebrew 의 node 를 PATH 에 넣지 않으므로 후보 경로를 보강한다.\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\nif [ -s \"$HOME/.nvm/nvm.sh\" ]; then . \"$HOME/.nvm/nvm.sh\" >/dev/null 2>&1; fi\ncd \"$PROJECT_DIR/../..\" || { echo \"warning: 프로젝트 루트 이동 실패 — cap copy 건너뜀\"; exit 0; }\nif command -v npx >/dev/null 2>&1; then\n  echo \"[CAP] npx cap copy ios 실행...\"\n  npx cap copy ios\nelse\n  echo \"warning: node/npx 미발견 — cap copy 건너뜀 (웹 자산이 최신이 아닐 수 있음)\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		504EC3001FED79650016851F /* Sources */ = {
