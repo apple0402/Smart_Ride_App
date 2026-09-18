@@ -7,10 +7,10 @@ struct VoteSafeIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "안전 투표"
 
     @Parameter(title: "Zone ID")
-    var zoneId: String = ""
+    var zoneId: String
 
     @Parameter(title: "Zone Type")
-    var zoneType: String = ""
+    var zoneType: String
 
     init() {}
 
@@ -41,7 +41,7 @@ struct VoteDangerIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "위험 유지"
 
     @Parameter(title: "Zone ID")
-    var zoneId: String = ""
+    var zoneId: String 
 
     init() {}
 
