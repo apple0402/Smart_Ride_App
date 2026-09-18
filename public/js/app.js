@@ -2014,3 +2014,54 @@ if (Platform.isIOS && window.CapBridge?.BackgroundSafety) {
 
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 딥링크(커스텀 스킴) 수신 — 네이티브 앱 이메일 인증 리디렉션 처리
+//   웹은 Auth.init()이 window.location(?code / #access_token)에서 직접 처리하지만,
+//   네이티브 앱은 com.gansam.smartrider://auth-callback 으로 열려 window.location이
+//   바뀌지 않으므로, @capacitor/app 의 appUrlOpen 이벤트로 URL을 받아 세션을 설정한다.
+//   세션 설정에 성공하면 Auth.init()의 onAuthStateChange(SIGNED_IN)가
+//   VerificationModal 표시 + 네이티브 Keychain 동기화를 이어서 처리한다.
+// ═══════════════════════════════════════════════════════════════════════════
+async function handleAuthDeepLink(rawUrl) {
+  if (!rawUrl) return;
+  let url;
+  try { url = new URL(rawUrl); } catch (e) { return; }
+
+  // auth-callback 경로만 처리 (커스텀 스킴에서는 host 자리에 'auth-callback'이 온다)
+  const target = (url.host || url.hostname || '').toLowerCase();
+  if (target && target !== 'auth-callback') return;
+
+  const search = new URLSearchParams(url.search);
+  const hash   = new URLSearchParams((url.hash || '').replace(/^#/, ''));
+
+  const code         = search.get('code');
+  const accessToken  = hash.get('access_token');
+  const refreshToken = hash.get('refresh_token');
+  const errorDesc    = search.get('error_description') || hash.get('error_description');
+
+  try {
+    if (code) {
+      // PKCE 흐름 — 쿼리의 code를 세션으로 교환
+      await sb.auth.exchangeCodeForSession(code);
+    } else if (accessToken && refreshToken) {
+      // 암시적(implicit) 흐름 — 해시에 토큰이 실려 온다
+      await sb.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+    } else if (errorDesc) {
+      console.warn('[SafeRide] 딥링크 인증 오류:', errorDesc);
+    }
+  } catch (e) {
+    console.warn('[SafeRide] 딥링크 세션 설정 실패:', e);
+  }
+}
+
+// 네이티브 App 플러그인(@capacitor/app)이 있을 때만 등록
+if (window.Capacitor?.isNativePlatform?.() && typeof window.Capacitor?.registerPlugin === 'function') {
+  const CapApp = window.Capacitor.registerPlugin('App');
+  // 앱 실행 중 딥링크 수신
+  CapApp.addListener('appUrlOpen', data => handleAuthDeepLink(data?.url));
+  // 콜드 스타트: 앱이 딥링크로 처음 실행된 경우
+  if (typeof CapApp.getLaunchUrl === 'function') {
+    CapApp.getLaunchUrl().then(res => { if (res?.url) handleAuthDeepLink(res.url); }).catch(() => {});
+  }
+}
+

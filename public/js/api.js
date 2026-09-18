@@ -167,7 +167,11 @@ const API = {
   async signup(email, password, name) {
     const { data, error } = await sb.auth.signUp({
       email, password,
-      options: { data: { name } }
+      options: {
+        data: { name },
+        // 네이티브 앱: 이메일 인증 링크 클릭 후 커스텀 스킴으로 앱 복귀 (SceneDelegate → appUrlOpen)
+        emailRedirectTo: 'com.gansam.smartrider://auth-callback'
+      }
     });
     if (error) return { error: error.message };
     return { id: data.user?.id, email: data.user?.email, name, token: data.session?.access_token };
