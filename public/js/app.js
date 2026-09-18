@@ -194,7 +194,8 @@ const NativeTTS = {
       if (!window.speechSynthesis) return;
       // [5차 수정] 오디오 세션이 잠겨 있으면(터치 전) 발화해도 무음이므로 여기서 한 번 더 시도.
       // 이미 언락됐으면 no-op이다.
-      AudioUnlock.unlock();
+      // [7차 수정] force:true — 이 폴백은 iOS 네이티브에서도 동작해야 하므로 언록 스킵 가드를 우회한다.
+      AudioUnlock.unlock({ force: true });
       AudioUnlock.resume();
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
@@ -282,7 +283,15 @@ const AudioUnlock = {
   // 44바이트 헤더만 있는 무음 WAV (data URI) — 외부 파일 의존 없이 오디오 파이프라인만 깨운다
   _SILENT_WAV: 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=',
 
-  unlock() {
+  // opts.force — iOS 네이티브에서도 언록을 강제 실행(웹 speechSynthesis 폴백 전용).
+  unlock(opts) {
+    // [7차 수정] iOS 네이티브 앱: 웹 오디오 언록(HTML5 Audio·speechSynthesis·AudioContext)이
+    // WKWebView 오디오 세션을 처음 활성화하며 타 앱(유튜브·음악) 재생을 끊는다.
+    // 네이티브 경고음/음성은 AVAudioPlayer·AVSpeechSynthesizer 경로이고 AudioSessionHardening
+    // 스위즐로 mixWithOthers 가 보장되므로 이 웹 언록 자체가 불필요하다.
+    // → 명시적 force 호출(웹 speechSynthesis 폴백)이 아니면 iOS 네이티브에서는 건너뛴다.
+    //   (웹/PWA·Android 네이티브 동작은 기존과 완전히 동일.)
+    if (!opts?.force && window.Capacitor?.isNativePlatform?.() && Platform.isIOS) return;
     if (this._unlocked) return;
 
     let ok = false;
@@ -339,9 +348,14 @@ const AudioUnlock = {
 };
 
 // once를 쓰지 않는다 — 언락이 실패하면 다음 터치에서 재시도해야 하기 때문
-document.addEventListener('touchstart', () => AudioUnlock.unlock(), { capture: true, passive: true });
-document.addEventListener('click',      () => AudioUnlock.unlock(), { capture: true, passive: true });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) AudioUnlock.resume(); });
+// [7차 수정] iOS 네이티브 앱에서는 전역 터치/클릭 언록·resume 을 아예 등록하지 않는다 —
+// 첫 터치/'라이딩 시작' 순간 웹 오디오 세션을 깨워 타 앱(유튜브) 재생을 끊기 때문(위 unlock() 주석 참고).
+// 웹/PWA·Android 네이티브에서는 기존과 동일하게 등록된다.
+if (!(window.Capacitor?.isNativePlatform?.() && Platform.isIOS)) {
+  document.addEventListener('touchstart', () => AudioUnlock.unlock(), { capture: true, passive: true });
+  document.addEventListener('click',      () => AudioUnlock.unlock(), { capture: true, passive: true });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) AudioUnlock.resume(); });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // [6차 추가] AudioGate — 앱 진입 시 오디오 언록 전용 게이트 오버레이
