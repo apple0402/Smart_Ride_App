@@ -1014,18 +1014,25 @@ const GPS = {
   _startBearingAnim() {
     if (this._bearingAnimFrame || !map.setBearing) return;
     const step = () => {
-      // 최단 경로 회전: 180° 기준으로 시계/반시계 결정 (350°→10° 문제 해결)
-      const diff = ((this._targetBearing - this._currentBearing + 540) % 360) - 180;
-      if (Math.abs(diff) < 0.3) {
-        this._currentBearing = this._targetBearing;
+      try {
+        // 최단 경로 회전: 180° 기준으로 시계/반시계 결정 (350°→10° 문제 해결)
+        const diff = ((this._targetBearing - this._currentBearing + 540) % 360) - 180;
+        if (Math.abs(diff) < 0.3) {
+          this._currentBearing = this._targetBearing;
+          this._applyBearing(this._currentBearing);
+          this._bearingAnimFrame = null;
+          return;
+        }
+        // LERP factor 0.12: 빠른 응답 + 과도한 진동 억제 균형
+        this._currentBearing = (this._currentBearing + diff * 0.12 + 360) % 360;
         this._applyBearing(this._currentBearing);
+        this._bearingAnimFrame = requestAnimationFrame(step);
+      } catch (e) {
+        // _applyBearing/setBearing 예외 시에도 플래그를 반드시 null 로 되돌려
+        // 다음 GPS 샘플의 _startBearingAnim() 이 루프를 재시작할 수 있게 한다(영구 프리징 방지).
         this._bearingAnimFrame = null;
-        return;
+        console.error('[bearing-anim]', e);
       }
-      // LERP factor 0.12: 빠른 응답 + 과도한 진동 억제 균형
-      this._currentBearing = (this._currentBearing + diff * 0.12 + 360) % 360;
-      this._applyBearing(this._currentBearing);
-      this._bearingAnimFrame = requestAnimationFrame(step);
     };
     this._bearingAnimFrame = requestAnimationFrame(step);
   },
