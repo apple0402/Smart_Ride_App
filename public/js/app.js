@@ -690,7 +690,12 @@ const GpsDebug = {
     const t = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     let text;
     if (state === 'on' && lat != null) {
-      text = `✅ ${lat.toFixed(5)},\n   ${lng.toFixed(5)}\n정확도 ${accuracy != null ? Math.round(accuracy) + 'm' : '?'}\n${t}`;
+      const a = accuracy;
+      const tier = a == null ? '?' : a <= 30 ? '양호' : a <= 100 ? '보통' : '불량';
+      // 정보창은 항상 4줄 고정(정확도 tier는 같은 줄에만 표기) — SOS 버튼 위 줄 수를
+      // 정확도 상태와 무관하게 유지해 버튼 화면 좌표가 흔들리지 않게 한다.
+      // 불량 경고는 F2의 버튼 아래 안내 영역에서 처리한다.
+      text = `✅ ${lat.toFixed(5)},\n   ${lng.toFixed(5)}\n정확도 ${a != null ? Math.round(a) + 'm' : '?'} (${tier})\n${t}`;
     } else if (state === 'acquiring') {
       text = `🔵 GPS 탐색 중...\n${t}`;
     } else if (state === 'trigger') {
