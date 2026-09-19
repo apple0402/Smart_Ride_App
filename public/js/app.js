@@ -720,7 +720,7 @@ const GpsDebug = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SOS 모듈 — 원클릭 위급 상황 구조 요청
+// SOS 모듈 — 원클릭 위급 상황 위치 공유
 // Web Share API → 카카오톡·SMS·119 등으로 실시간 GPS 좌표 즉시 전파
 // + Supabase emergency_logs 테이블에 사고 순간 위치 자동 저장 (관제 연동용)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -780,7 +780,7 @@ const SOS = {
       if (navigator.share) {
         await navigator.share({ title: '🚨 Safe Ride 위급 상황 구조 요청', text: shareText });
         // navigator.share가 resolve = 사용자가 전송 대상 선택 완료
-        Toast.show('구조 요청 전송 완료! 위치 정보가 저장됐습니다.');
+        Toast.show('위치 공유 완료! 필요하면 119에도 직접 신고하세요.');
       } else {
         // 폴백: 클립보드 복사 (PC·Web Share 미지원 환경)
         await navigator.clipboard.writeText(shareText).catch(() => {});
@@ -792,7 +792,7 @@ const SOS = {
         Toast.show('전송 실패 — 직접 119(긴급)에 연락하세요.');
       }
     } finally {
-      if (btn) { btn.textContent = '🚨 SOS 구조 요청'; btn.disabled = false; btn.classList.remove('sending'); }
+      if (btn) { btn.textContent = '🚨 SOS 위치 공유'; btn.disabled = false; btn.classList.remove('sending'); }
     }
   }
 };
