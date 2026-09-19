@@ -1809,12 +1809,12 @@ const LocBtn = {
 // ═══════════════════════════════════════════════════════════════════════════
 let _toastTimer;
 const Toast = {
-  show(msg) {
+  show(msg, ms = 3200) {
     const el = document.getElementById('toast');
     el.textContent = msg;
     el.classList.add('show');
     clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+    _toastTimer = setTimeout(() => el.classList.remove('show'), ms);
   }
 };
 
