@@ -722,12 +722,17 @@ const SOS = {
     if (navigator.vibrate) navigator.vibrate([200, 80, 200, 80, 600]);
 
     try {
-      const address = await getAddress(pos.lat, pos.lng);
+      // 주소 조회는 2초 안에 못 받으면(느린 Nominatim/네트워크) 생략하고 SOS를 계속 진행한다.
+      // 예외가 나도 null 로 흡수해 전송이 막히지 않도록 한다.
+      const address = await Promise.race([
+        getAddress(pos.lat, pos.lng),
+        new Promise(resolve => setTimeout(() => resolve(null), 2000)),
+      ]).catch(() => null);
       const mapUrl  = `https://www.google.com/maps?q=${pos.lat},${pos.lng}`;
       const shareText = [
         '[Safe Ride 위급 상황 구조 요청]',
         '도움이 필요합니다! 현재 저의 실시간 위치 정보입니다.',
-        `- 현재 주소: ${address}`,
+        ...(address ? [`- 현재 주소: ${address}`] : []),
         `- 상세 좌표: 위도 ${pos.lat.toFixed(5)}, 경도 ${pos.lng.toFixed(5)}`,
         `- 지도 링크: ${mapUrl}`
       ].join('\n');
