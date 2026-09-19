@@ -776,6 +776,7 @@ const GPS = {
   _targetBearing:    0,       // 목표 방향각 (이동 평균 결과)
   _currentBearing:   0,       // 현재 표시 방향각 (LERP 중간값)
   _bearingAnimFrame: null,    // requestAnimationFrame 핸들
+  _bigTurnPending:   false,   // 급회전(≥90°) 1회차 감지 플래그 — 2연속 확인 시 버퍼 초기화
   _markerRotDeg:     0,       // 마커 아이콘에 현재 적용된 회전각(도) — 중복 갱신 방지용
 
   // ── iOS PWA 전용: 시스템에 "GPS 필수 앱" 신호를 먼저 쏘는 강제 트리거 ───────
@@ -903,6 +904,7 @@ const GPS = {
     // 베어링 애니메이션 정리
     if (this._bearingAnimFrame) { cancelAnimationFrame(this._bearingAnimFrame); this._bearingAnimFrame = null; }
     this._headingBuffer  = [];
+    this._bigTurnPending = false;
     this._currentBearing = 0;
     this._targetBearing  = 0;
     this._setGpsUI('off');
@@ -978,6 +980,18 @@ const GPS = {
     // 시속 3km/h 이하(정지·정차)이거나 헤딩이 없을 때는 갱신을 건너뛰어 마지막 방향을 유지(Lock) — 제자리 회전 방지.
     // 실제 적용(지도 회전 vs 마커 회전)은 LERP 스텝이 호출하는 _applyBearing 에서 Ride.active 로 분기한다.
     if (this._lastHeading != null && (rawKmh == null || rawKmh > 3)) {
+      // [수정안 a] 유턴/급회전 감지: 새 헤딩이 현재 평균과 90° 이상 차이나면 옛 방향 샘플을 버리고
+      // 버퍼를 리셋해 즉시 새 방향으로 스냅한다. 단 GPS 단발 튐 오검출 방지를 위해
+      // "2연속" 큰 차이일 때만 리셋(1회차는 대기, 이번 샘플은 정상 누적).
+      if (this._headingBuffer.length) {
+        const delta = Math.abs(((this._lastHeading - this._targetBearing + 540) % 360) - 180);
+        if (delta >= 90) {
+          if (this._bigTurnPending) { this._headingBuffer = []; this._bigTurnPending = false; }
+          else                      { this._bigTurnPending = true; }
+        } else {
+          this._bigTurnPending = false;
+        }
+      }
       // 이동 평균 버퍼에 추가 (최근 5개로 원형 평균 — GPS 튐 완화)
       this._headingBuffer.push(this._lastHeading);
       if (this._headingBuffer.length > 5) this._headingBuffer.shift();
@@ -1162,7 +1176,7 @@ const Ride = {
     // 화살표가 갑자기 북쪽으로 초기화되지 않게 한다(주행 중엔 마커 rotation 0=위쪽이었으므로,
     // 북쪽 고정 지도에선 실제 마지막 헤딩값으로 마커를 돌려줘야 진행방향이 보존된다).
     const lastDeg = GPS._lastHeading != null ? GPS._lastHeading : GPS._currentBearing;
-    GPS._headingBuffer = []; GPS._currentBearing = 0; GPS._targetBearing = 0;
+    GPS._headingBuffer = []; GPS._bigTurnPending = false; GPS._currentBearing = 0; GPS._targetBearing = 0;
     if (map.setBearing) map.setBearing(0);
     GPS._setMarkerRotation(lastDeg);
 
