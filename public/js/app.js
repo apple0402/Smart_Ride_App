@@ -506,7 +506,7 @@ function renderZones(zones) {
     // 마커 클릭 시 상세 팝업 (주소는 비동기 로딩)
     const marker = L.marker([z.lat, z.lng], { icon }).addTo(zoneLayer);
     const popupDiv = document.createElement('div');
-    popupDiv.style.cssText = 'min-width:200px;max-width:260px;font-size:13px;line-height:1.6';
+    popupDiv.style.cssText = 'max-width:260px;font-size:13px;line-height:1.6;overflow-wrap:anywhere';
     popupDiv.innerHTML = `
       <div style="font-weight:800;font-size:15px;margin-bottom:6px">${ZONE_ICONS[z.type]||'⚠️'} ${escHtml(zoneLabel(z))}</div>
       <div style="font-size:11px;margin-bottom:4px;color:#cbd5e1">${conf.label}</div>
@@ -515,7 +515,7 @@ function renderZones(zones) {
       <div style="color:#86efac;font-size:11px;margin-bottom:6px">✅ 이젠 안전해요 (${z.safeVotes||0} / 3명 완료)</div>
       <div style="color:#f97316;font-size:11px">신고 수: ${z.reportCount || 1}</div>
     `;
-    marker.bindPopup(popupDiv, { maxWidth: 280 });
+    marker.bindPopup(popupDiv, { maxWidth: 260 });
     marker.on('popupopen', () => {
       getAddress(z.lat, z.lng).then(addr => {
         const el = document.getElementById(`popup-addr-${z.id}`);
