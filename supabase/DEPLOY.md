@@ -119,9 +119,10 @@ node supabase/smoke-test.js
 ---
 
 ## 3단계. 재심사 제출 전 수동 작업 (App Store Connect)
-- [ ] 데모 계정 `applereview.hazard@gmail.com` / `Rvw#2026Hazard!` 가입 + 신고 1~2건(confirmed) + Lv.2~3 포인트 세팅.
-- [ ] App Review Information ▸ Sign-In Info 를 신규 계정으로 교체(기존 naver 삭제).
-- [ ] 기존 개인계정 `lbs0402@naver.com` 비밀번호 변경 권장.
+- [ ] 데모 계정 가입 + 신고 1~2건(confirmed) + Lv.2~3 포인트 세팅.
+      (데모 계정 정보는 저장소에 두지 않음 — App Store Connect Review Notes 참조)
+- [ ] App Review Information ▸ Sign-In Info 를 신규 계정으로 교체(기존 계정 삭제).
+- [ ] 기존 개인계정(App Store Connect Review Notes 참조) 비밀번호 변경 권장.
 
 ---
 
