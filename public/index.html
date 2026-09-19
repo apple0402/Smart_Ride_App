@@ -210,6 +210,13 @@
   </svg>
 </button>
 
+<!-- 119 전화 버튼 — 우측 FAB 스택 위(위험신고 FAB 위). SOS 공유(좌상단)와 물리적으로 분리 + confirm() 로 오터치 방지. -->
+<!-- z-index:140(=SOS/gps-debug) → 슬라이드 패널(200)·오버레이(150)·투표 팝업(300)이 열리면 가려짐. -->
+<a href="tel:119" id="call-119-btn"
+  onclick="return confirm('119에 전화를 겁니다. 계속할까요?')"
+  style="position:fixed;right:16px;bottom:330px;z-index:140;min-height:44px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;padding:12px 16px;background:#1d4ed8;color:#fff;font-size:14px;font-weight:800;border-radius:14px;text-decoration:none;box-shadow:0 2px 10px rgba(0,0,0,0.5);-webkit-tap-highlight-color:transparent;"
+  title="119 전화">📞 119 전화</a>
+
 <!-- 내 위치 버튼 (Strava 방식 — 탐색 중 강조, 클릭 시 GPS 위치로 복귀) -->
 <button id="loc-btn" onclick="LocBtn.flyToMe()"
   class="fixed right-4 w-12 h-12 bg-slate-800 border border-slate-600 rounded-full shadow-lg flex items-center justify-center active:scale-90"
