@@ -160,6 +160,20 @@ function formatDate(isoStr) {
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// ── 경과 시간 포맷 ("방금 전 / N분 전 / N시간 M분 전") — SOS 메시지 공통 ──────────
+function formatAgo(ts) {
+  const totalMin = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  if (totalMin === 0) return '방금 전';
+  if (totalMin < 60)  return `${totalMin}분 전`;
+  const h = Math.floor(totalMin / 60), m = totalMin % 60;
+  return m ? `${h}시간 ${m}분 전` : `${h}시간 전`;
+}
+
+// ── 위치 오차 반경 포맷 (1km 이상은 km 소수 1자리) — SOS 메시지 공통 ──────────
+function formatRadius(m) {
+  return m >= 1000 ? `반경 약 ${(m / 1000).toFixed(1)}km` : `반경 약 ${Math.round(m)}m`;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // NativeTTS — @capacitor-community/text-to-speech 브릿지
 // iOS: AVSpeechSynthesizer → 잠금화면·백그라운드에서도 네이티브 음성 안내 동작
@@ -728,24 +742,30 @@ const SOS = {
         getAddress(pos.lat, pos.lng),
         new Promise(resolve => setTimeout(() => resolve(null), 2000)),
       ]).catch(() => null);
-      const mapUrl  = `https://www.google.com/maps?q=${pos.lat},${pos.lng}`;
+      const mapUrl    = `https://www.google.com/maps?q=${pos.lat},${pos.lng}`;
+      const accStr    = pos.accuracy != null ? formatRadius(pos.accuracy) : '확인 불가';
+      const fixTs     = pos.t || Date.now();
+      const timeStr   = new Date(fixTs).toLocaleTimeString('ko-KR');
+      // 위치 획득 시각이 30초 이상 지났으면 경과 시간을 함께 표기
+      const agoSuffix = (Date.now() - fixTs) >= 30000 ? ` (${formatAgo(fixTs)})` : '';
       let shareText = [
         '[Safe Ride 위급 상황 구조 요청]',
-        '도움이 필요합니다! 현재 저의 실시간 위치 정보입니다.',
+        '도움이 필요합니다! 현재 저의 위치 정보입니다.',
         ...(address ? [`- 현재 주소: ${address}`] : []),
         `- 상세 좌표: 위도 ${pos.lat.toFixed(5)}, 경도 ${pos.lng.toFixed(5)}`,
-        `- 지도 링크: ${mapUrl}`
+        `- 위치 오차: ${accStr}`,
+        `- 기준 시각: ${timeStr}${agoSuffix}`,
+        `- 현재 위치 지도 링크: ${mapUrl}`
       ].join('\n');
 
       // 현재 정확도가 나쁘면(>100m 또는 미상) 마지막으로 정확했던 위치를 함께 안내.
       // lastGoodFix가 없으면 아무것도 덧붙이지 않는다.
       if ((pos.accuracy == null || pos.accuracy > 100) && GPS.lastGoodFix) {
         const g = GPS.lastGoodFix;
-        const minsAgo = Math.max(0, Math.round((Date.now() - g.t) / 60000));
         const gMapUrl = `https://www.google.com/maps?q=${g.lat},${g.lng}`;
         shareText += '\n' + [
-          `※ 위치 오차가 큽니다. 마지막으로 정확했던 위치: 위도 ${g.lat.toFixed(5)}, 경도 ${g.lng.toFixed(5)} (반경 약 ${Math.round(g.accuracy)}m, ${minsAgo}분 전)`,
-          `- 지도 링크: ${gMapUrl}`
+          `※ 위치 오차가 큽니다. 마지막으로 정확했던 위치: 위도 ${g.lat.toFixed(5)}, 경도 ${g.lng.toFixed(5)} (${formatRadius(g.accuracy)}, ${formatAgo(g.t)})`,
+          `- 마지막 정확 위치 지도 링크: ${gMapUrl}`
         ].join('\n');
       }
 
