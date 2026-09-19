@@ -1038,7 +1038,9 @@ const GPS = {
   //  · 비주행 = 북쪽 고정: 지도는 그대로 두고 마커 아이콘 자체를 진행방향으로 회전시킨다.
   _applyBearing(deg) {
     if (Ride.active) {
-      if (map.setBearing) map.setBearing(deg);   // 헤딩업: 지도 회전
+      // setBearing(θ)는 지도를 시계방향 +θ 회전(→ 화면 위쪽에 방위 -θ가 옴)이므로,
+      // 진행방향 deg 를 화면 위로 올리려면 부호를 반전한 -deg(=360-deg) 를 넘겨야 한다.
+      if (map.setBearing) map.setBearing((360 - deg) % 360);   // 헤딩업: 지도 회전(부호 반전)
       this._setMarkerRotation(0);                 // 마커는 위쪽(진행방향) 고정
     } else {
       this._setMarkerRotation(deg);               // 북쪽 고정 지도 위에서 마커가 진행방향으로 회전
