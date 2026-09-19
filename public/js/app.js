@@ -716,6 +716,13 @@ const GpsDebug = {
       sosBtn.style.opacity = ready ? '1' : '0.45';
       sosBtn.style.filter  = ready ? '' : 'grayscale(0.4)';
     }
+
+    // 정확도 불량(>100m)일 때만 버튼 '아래' 경고 표시 — 버튼 위 레이아웃/좌표는 불변
+    const warnEl = document.getElementById('sos-accuracy-warn');
+    if (warnEl) {
+      const bad = (state === 'on' && accuracy != null && accuracy > 100);
+      warnEl.style.display = bad ? 'block' : 'none';
+    }
   }
 };
 
