@@ -781,6 +781,9 @@ const SOS = {
         ].join('\n');
       }
 
+      // 공유 메시지 맨 끝 고지 — 119 자동 전달이 아님을 수신자에게 명확히 (share·클립보드 공통)
+      shareText += '\n※ 이 메시지는 119 등 응급기관에 자동 전달되지 않습니다. 필요하면 위 위치로 119에 신고해 주세요.';
+
       // DB 저장 — 공유와 병렬 실행, 실패해도 공유는 계속 진행
       API.logEmergency({ lat: pos.lat, lng: pos.lng, address }).catch(() => {});
 
