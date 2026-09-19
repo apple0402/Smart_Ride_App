@@ -729,13 +729,25 @@ const SOS = {
         new Promise(resolve => setTimeout(() => resolve(null), 2000)),
       ]).catch(() => null);
       const mapUrl  = `https://www.google.com/maps?q=${pos.lat},${pos.lng}`;
-      const shareText = [
+      let shareText = [
         '[Safe Ride 위급 상황 구조 요청]',
         '도움이 필요합니다! 현재 저의 실시간 위치 정보입니다.',
         ...(address ? [`- 현재 주소: ${address}`] : []),
         `- 상세 좌표: 위도 ${pos.lat.toFixed(5)}, 경도 ${pos.lng.toFixed(5)}`,
         `- 지도 링크: ${mapUrl}`
       ].join('\n');
+
+      // 현재 정확도가 나쁘면(>100m 또는 미상) 마지막으로 정확했던 위치를 함께 안내.
+      // lastGoodFix가 없으면 아무것도 덧붙이지 않는다.
+      if ((pos.accuracy == null || pos.accuracy > 100) && GPS.lastGoodFix) {
+        const g = GPS.lastGoodFix;
+        const minsAgo = Math.max(0, Math.round((Date.now() - g.t) / 60000));
+        const gMapUrl = `https://www.google.com/maps?q=${g.lat},${g.lng}`;
+        shareText += '\n' + [
+          `※ 위치 오차가 큽니다. 마지막으로 정확했던 위치: 위도 ${g.lat.toFixed(5)}, 경도 ${g.lng.toFixed(5)} (반경 약 ${Math.round(g.accuracy)}m, ${minsAgo}분 전)`,
+          `- 지도 링크: ${gMapUrl}`
+        ].join('\n');
+      }
 
       // DB 저장 — 공유와 병렬 실행, 실패해도 공유는 계속 진행
       API.logEmergency({ lat: pos.lat, lng: pos.lng, address }).catch(() => {});
@@ -766,6 +778,7 @@ const SOS = {
 const GPS = {
   watchId:           null,
   lastPos:           null,
+  lastGoodFix:       null,    // 정확도 50m 이하였던 마지막 위치(좌표+정확도+시각) — SOS 폴백용
   active:            false,
   autoCenter:        true,
   accuracyCircle:    null,
@@ -901,6 +914,7 @@ const GPS = {
     if (this.accuracyCircle)   { this.accuracyCircle.remove(); this.accuracyCircle = null; }
     this.active      = false;
     this.lastPos     = null;
+    this.lastGoodFix = null;
     this.speedBuffer = [];
     this._gpsLocked  = false;
     this._hasPanned  = false;
@@ -954,7 +968,11 @@ const GPS = {
     } else {
       riderMarker.setLatLng([lat, lng]);
     }
-    this.lastPos = { lat, lng, accuracy };
+    this.lastPos = { lat, lng, accuracy, t: Date.now() };
+    // 정확도 50m 이하일 때만 "믿을 수 있는 마지막 위치" 갱신 (SOS 폴백용)
+    if (accuracy != null && accuracy <= 50) {
+      this.lastGoodFix = { lat, lng, accuracy, t: Date.now() };
+    }
     updateNearbyCount();
 
     // 정확도 원
