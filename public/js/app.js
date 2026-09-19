@@ -125,6 +125,8 @@ async function getAddress(lat, lng) {
     _addrCache[key] = result;
     return result;
   } catch {
+    // 조회 실패 폴백: 좌표 문자열. ⚠️ SOS(SOS.trigger)는 이 형식과 정확히 비교해
+    // '주소 없음'으로 판별한다 — 이 형식을 바꾸면 SOS 쪽 비교부도 함께 수정해야 한다.
     return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
   }
 }
@@ -750,10 +752,15 @@ const SOS = {
     try {
       // 주소 조회는 2초 안에 못 받으면(느린 Nominatim/네트워크) 생략하고 SOS를 계속 진행한다.
       // 예외가 나도 null 로 흡수해 전송이 막히지 않도록 한다.
-      const address = await Promise.race([
+      const rawAddr = await Promise.race([
         getAddress(pos.lat, pos.lng),
         new Promise(resolve => setTimeout(() => resolve(null), 2000)),
       ]).catch(() => null);
+      // getAddress 는 조회 실패 시 좌표 문자열("37.1234, 127.5678")을 반환한다(마커 팝업용 폴백).
+      // SOS 에서는 이를 '주소 없음'(null)으로 간주해 아래 "상세 좌표" 줄과 중복되지 않게 한다.
+      // ⚠️ 아래 비교 형식은 getAddress catch 절의 폴백 형식과 정확히 일치해야 한다 —
+      //    한쪽(toFixed(4) 등)을 바꾸면 다른 쪽도 함께 수정할 것.
+      const address = (rawAddr && rawAddr !== `${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}`) ? rawAddr : null;
       const mapUrl    = `https://www.google.com/maps?q=${pos.lat},${pos.lng}`;
       const accStr    = pos.accuracy != null ? formatRadius(pos.accuracy) : '확인 불가';
       const fixTs     = pos.t || Date.now();
