@@ -100,7 +100,7 @@
 
     /* SOS 버튼 */
     @keyframes sos-glow { 0%,100%{box-shadow:0 0 6px rgba(220,38,38,0.7)} 50%{box-shadow:0 0 14px rgba(255,60,60,1)} }
-    #sos-btn { width:100%;padding:7px 10px;background:#dc2626;color:white;font-size:12px;font-weight:900;letter-spacing:0.04em;border:none;border-top:1px solid rgba(255,80,80,0.4);cursor:pointer;font-family:system-ui,sans-serif;transition:background 0.15s,transform 0.1s;-webkit-tap-highlight-color:transparent; }
+    #sos-btn { flex:0 0 140px;min-height:44px;padding:8px 10px;background:#dc2626;color:white;font-size:13px;font-weight:900;letter-spacing:0.02em;border:none;border-radius:8px;cursor:pointer;font-family:system-ui,sans-serif;white-space:nowrap;transition:background 0.15s,transform 0.1s;-webkit-tap-highlight-color:transparent; }
     #sos-btn:active { background:#b91c1c !important; transform:scale(0.97); }
     #sos-btn.sending { animation:sos-glow 0.7s infinite; background:#b91c1c; }
   </style>
@@ -549,15 +549,21 @@
 <!-- TOAST -->
 <div id="toast"></div>
 
-<!-- GPS 현재 위치 정보창 + SOS 위치 공유 버튼 -->
+<!-- GPS 위치 정보 + SOS 위치 공유 — 가로 바(전체 폭) -->
 <div id="gps-debug"
-  style="position:fixed;left:8px;top:94px;z-index:140;background:rgba(0,0,0,0.82);border-radius:10px;border:1px solid rgba(34,197,94,0.35);max-width:200px;overflow:hidden;">
-  <div id="gps-info-text" style="color:#86efac;font-size:10px;font-family:monospace;line-height:1.55;padding:6px 10px;white-space:pre;">⚫ GPS 초기화 중...</div>
-  <button id="sos-btn" onclick="SOS.trigger()">🚨 SOS 위치 공유</button>
-  <!-- 버튼 아래 안내 (항상 표시) — 자동 줄바꿈 허용 -->
-  <div id="sos-note" style="color:#cbd5e1;font-size:11px;line-height:1.45;padding:6px 10px;border-top:1px solid rgba(255,255,255,0.08);white-space:normal;">119에 자동 연락되지 않습니다. 내 위치를 문자/카톡으로 공유합니다.</div>
-  <!-- 정확도 불량일 때만 표시 (버튼 아래에만 위치 → 버튼 좌표 불변) -->
-  <div id="sos-accuracy-warn" style="display:none;color:#fca5a5;font-size:11px;line-height:1.45;padding:0 10px 6px;white-space:normal;">⚠️ 정확도 낮음 (SOS는 그대로 전송됩니다)</div>
+  style="position:fixed;left:8px;right:8px;top:94px;z-index:140;background:rgba(0,0,0,0.82);border-radius:10px;border:1px solid rgba(34,197,94,0.35);overflow:hidden;">
+  <!-- 1행: SOS 버튼(좌) + GPS 정보 2줄(우) -->
+  <div style="display:flex;align-items:center;gap:10px;padding:5px 10px;">
+    <button id="sos-btn" onclick="SOS.trigger()">🚨 SOS 위치 공유</button>
+    <div id="gps-info-text" style="flex:1;min-width:0;font-family:monospace;line-height:1.45;">
+      <div id="gps-line1" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#86efac;font-size:11px;">⚫ GPS 초기화 중...</div>
+      <div id="gps-line2" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#cbd5e1;font-size:11px;"></div>
+    </div>
+  </div>
+  <!-- 2행: 안내 한 줄 -->
+  <div id="sos-note" style="color:#cbd5e1;font-size:11px;line-height:1.4;padding:5px 10px;border-top:1px solid rgba(255,255,255,0.08);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">119 자동 연락 안 됨 · 문자/카톡으로 내 위치 공유</div>
+  <!-- 3행: 정확도 불량일 때만 표시 (기존 토글 유지, 양방향) -->
+  <div id="sos-accuracy-warn" style="display:none;color:#fca5a5;font-size:11px;line-height:1.4;padding:0 10px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">⚠️ 정확도 낮음 (SOS는 그대로 전송됩니다)</div>
 </div>
 
 <!-- 이메일 인증 성공 모달 -->

@@ -685,31 +685,36 @@ function isZoneVoteLocked(zoneId, distance, entryDist) {
 const GpsDebug = {
   _el: null,
 
-  init() { this._el = document.getElementById('gps-info-text'); },
+  init() {
+    this._el = document.getElementById('gps-info-text');
+    this._l1 = document.getElementById('gps-line1');
+    this._l2 = document.getElementById('gps-line2');
+  },
 
   update(state, lat, lng, accuracy, msg) {
-    if (!this._el) return;
+    if (!this._l1 || !this._l2) return;
     const t = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    let text;
+    // 가로 바의 GPS 정보는 항상 2줄 고정 — 상태가 바뀌어도 바 높이/SOS 버튼 y좌표가
+    // 변하지 않는다. 한 줄을 넘치는 글자는 CSS text-overflow:ellipsis 로 말줄임.
+    let l1, l2;
     if (state === 'on' && lat != null) {
       const a = accuracy;
       const tier = a == null ? '?' : a <= 30 ? '양호' : a <= 100 ? '보통' : '불량';
-      // 정보창은 항상 4줄 고정(정확도 tier는 같은 줄에만 표기) — SOS 버튼 위 줄 수를
-      // 정확도 상태와 무관하게 유지해 버튼 화면 좌표가 흔들리지 않게 한다.
-      // 불량 경고는 F2의 버튼 아래 안내 영역에서 처리한다.
-      text = `✅ ${lat.toFixed(5)},\n   ${lng.toFixed(5)}\n정확도 ${a != null ? Math.round(a) + 'm' : '?'} (${tier})\n${t}`;
+      l1 = `✅ ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      l2 = `정확도 ${a != null ? Math.round(a) + 'm' : '?'} (${tier}) · ${t}`;
     } else if (state === 'acquiring') {
-      text = `🔵 GPS 탐색 중...\n${t}`;
+      l1 = '🔵 GPS 탐색 중...'; l2 = t;
     } else if (state === 'trigger') {
-      text = `🟡 트리거 수신\n${lat != null ? lat.toFixed(5) + ', ' + lng.toFixed(5) : '?'}\n${t}`;
+      l1 = '🟡 트리거 수신'; l2 = `${lat != null ? lat.toFixed(5) + ', ' + lng.toFixed(5) : '?'} · ${t}`;
     } else if (state === 'retry' || state === 'watchdog') {
-      text = `🔄 ${msg || '재시도'}\n${t}`;
+      l1 = `🔄 ${msg || '재시도'}`; l2 = t;
     } else if (state === 'error') {
-      text = `❌ ${msg || 'GPS 오류'}\n${t}`;
+      l1 = `❌ ${msg || 'GPS 오류'}`; l2 = t;
     } else {
-      text = `⚫ GPS 꺼짐\n${t}`;
+      l1 = '⚫ GPS 꺼짐'; l2 = t;
     }
-    this._el.textContent = text;
+    this._l1.textContent = l1;
+    this._l2.textContent = l2;
 
     // GPS 미수신 시 SOS 버튼 반투명 처리 — 위치 없으면 전송 불가 상태를 시각적으로 표시
     const sosBtn = document.getElementById('sos-btn');
