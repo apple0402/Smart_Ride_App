@@ -190,6 +190,7 @@ const checks = [
     ok(!error, 'get_leaderboard 에러: ' + (error && error.message));
     ok(Array.isArray(data) && data.length >= 1, '랭킹이 비어 있음');
     ok('contribution_points' in data[0], '랭킹 행에 contribution_points 없음');
+    ok(!('name' in data[0]), '랭킹 행에 name 이 포함됨(익명화 실패)');
   }],
 
   ['계정 삭제 Edge Function(delete-account) → 익명화·삭제·재로그인 불가', async () => {
