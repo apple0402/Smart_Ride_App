@@ -7,6 +7,17 @@ const esbuild = require('esbuild');
 const SRC = path.join(__dirname, 'public');
 const OUT = path.join(__dirname, 'dist', 'public');
 
+// 개인정보 처리방침 URL 미설정 경고 — 빈 값으로 배포되면 설정 화면 링크가 동작하지 않는다.
+// (배포를 강제로 막으려면 아래 process.exit(1) 주석을 해제하세요.)
+{
+  const appJsSrc = fs.readFileSync(path.join(SRC, 'js', 'app.js'), 'utf8');
+  if (/const\s+PRIVACY_POLICY_URL\s*=\s*(['"])\s*\1/.test(appJsSrc)) {
+    console.warn('\n⚠️  [build-prod] PRIVACY_POLICY_URL 이 비어 있습니다 — 개인정보 처리방침 링크가 동작하지 않습니다.');
+    console.warn('    public/js/app.js 의 PRIVACY_POLICY_URL 을 실제 주소로 채운 뒤 다시 빌드하세요.\n');
+    // process.exit(1);
+  }
+}
+
 fs.rmSync(path.join(__dirname, 'dist'), { recursive: true, force: true });
 fs.cpSync(SRC, OUT, { recursive: true });
 

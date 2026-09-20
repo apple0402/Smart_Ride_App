@@ -5,6 +5,9 @@
 // ── 상수 ─────────────────────────────────────────────────────────────────────
 // 하드코딩 위치 완전 제거 — GPS 수신 전 지도 초기 뷰만을 위한 중립 좌표 (서울 시청)
 const INITIAL_VIEW = [37.5665, 126.9780];
+// 개인정보 처리방침 URL — 배포 전 실제 주소로 채울 것(값은 여기 한 곳만 수정).
+// 빈 값이면 build-prod.js 가 프로덕션 빌드 시 경고한다(공지: settings 링크는 안내 토스트만 표시).
+const PRIVACY_POLICY_URL = '';
 
 // ── Map 초기화 (leaflet-rotate 지원, 줌 컨트롤 제거) ─────────────────────────
 const mapOptions = { zoomControl: false, attributionControl: false };
@@ -1609,6 +1612,15 @@ const Settings = {
     localStorage.setItem('saferide_settings', JSON.stringify(s));
     Panels.closeAll();
     Toast.show('설정 저장됨 ✓');
+  },
+
+  // 개인정보 처리방침 열기. Capacitor(@capacitor/browser) 가 있으면 앱 내 인앱 브라우저로,
+  // 없으면 새 창(window.open)으로 연다. URL 미설정 시 안내만.
+  openPrivacyPolicy() {
+    if (!PRIVACY_POLICY_URL) { Toast.show('개인정보 처리방침 주소가 아직 설정되지 않았습니다.'); return; }
+    const B = window.CapBridge && window.CapBridge.Browser;
+    if (B && typeof B.open === 'function') B.open({ url: PRIVACY_POLICY_URL });
+    else window.open(PRIVACY_POLICY_URL, '_blank');
   }
 };
 

@@ -13,3 +13,6 @@ ios/DerivedData/
 ios/App/App.xcodeproj/xcuserdata/
 ios/App/Pods/
 *.xcuserstate
+
+# Supabase CLI 로컬 캐시(프로젝트 링크·토큰 등) — 커밋 금지
+supabase/.temp/
