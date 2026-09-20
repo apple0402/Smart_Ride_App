@@ -320,6 +320,34 @@ const checks = [
     ok(nullA === nullB,       `NULL 행 개수 변동(${nullB}→${nullA}) — 삭제가 deleteUser 보다 늦음(순서 오류)`);
     state.users = state.users.filter(x => x.id !== u.id);
   }],
+
+  // ── emergency_logs A: 90일 경과 로그 purge (관리자, 개수 검증) ────────────────
+  ['emergency_logs: 90일 경과 로그 purge(오래된 것만 삭제)', async () => {
+    if (!admin) return 'skip';
+    const p = at(7);
+    const oldTag = 'smoke-purge-old-' + rand();
+    const newTag = 'smoke-purge-new-' + rand();
+    const oldTs  = new Date(Date.now() - 100 * 86400000).toISOString(); // 100일 전
+    // service 로 오래된 행 2개(user_id NULL 포함) + 최근 행 1개 시드
+    const seed = await admin.from('emergency_logs').insert([
+      { user_id: null, latitude: p.lat, longitude: p.lng, address: oldTag, created_at: oldTs },
+      { user_id: null, latitude: p.lat, longitude: p.lng, address: oldTag, created_at: oldTs },
+      { user_id: null, latitude: p.lat, longitude: p.lng, address: newTag },
+    ]);
+    ok(!seed.error, '시드 insert 실패: ' + (seed.error && seed.error.message));
+
+    const purge = await admin.rpc('purge_stale_emergency_logs');
+    ok(!purge.error, 'purge RPC 에러: ' + (purge.error && purge.error.message));
+    ok(typeof purge.data === 'number', `정수 반환 아님(${typeof purge.data})`);
+    ok(purge.data >= 2, `삭제 건수가 2 미만(${purge.data})`);
+
+    const oldLeft = await admin.from('emergency_logs').select('id').eq('address', oldTag);
+    ok((oldLeft.data || []).length === 0, `90일 경과 행이 남음(${(oldLeft.data || []).length})`);
+    const newLeft = await admin.from('emergency_logs').select('id').eq('address', newTag);
+    ok((newLeft.data || []).length === 1, `최근 행이 잘못 삭제됨(${(newLeft.data || []).length})`);
+
+    await admin.from('emergency_logs').delete().in('address', [oldTag, newTag]);
+  }],
 ];
 
 const MANUAL = [
