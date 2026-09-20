@@ -238,6 +238,88 @@ const checks = [
     ok(typeof data === 'number', `정수 반환 아님(${typeof data})`);
     console.log(`      → 만료 처리 ${data}건`);
   }],
+
+  // ── emergency_logs S1: SELECT 를 본인 행으로 축소 ─────────────────────────────
+  ['emergency_logs: 로그인 사용자가 타인/익명 SOS 행을 못 읽는다', async () => {
+    if (!admin) return 'skip';
+    const [uA, uB] = state.users; const p = at(5); const tag = 'smoke-sel-' + rand();
+    // service 로 uB 행 1개 + 익명(NULL) 행 1개 시드(태그로만 정리 → 실데이터 무영향)
+    const seed = await admin.from('emergency_logs').insert([
+      { user_id: uB.id, latitude: p.lat, longitude: p.lng, address: tag },
+      { user_id: null,  latitude: p.lat, longitude: p.lng, address: tag },
+    ]);
+    ok(!seed.error, '시드 insert 실패: ' + (seed.error && seed.error.message));
+    // uA 세션(RLS 적용)으로 이 태그 행을 조회 → 본인 것이 아니므로 0건이어야 한다
+    const asA = await uA.cli.from('emergency_logs').select('id').eq('address', tag);
+    ok(!asA.error, 'select 에러: ' + (asA.error && asA.error.message));
+    ok((asA.data || []).length === 0, `타인/익명 SOS 행이 노출됨(${(asA.data || []).length}건)`);
+    await admin.from('emergency_logs').delete().eq('address', tag);
+  }],
+
+  // ── emergency_logs S3: INSERT 강화(authenticated / anon) ──────────────────────
+  ['emergency_logs: INSERT 사칭 차단 — authenticated & anon', async () => {
+    if (!admin) return 'skip';
+    const [uA, uB] = state.users; const p = at(5); const tag = 'smoke-ins-' + rand();
+    // (1) authenticated: 타인 user_id 삽입 거부
+    const spoof = await uA.cli.from('emergency_logs')
+      .insert({ user_id: uB.id, latitude: p.lat, longitude: p.lng, address: tag });
+    ok(spoof.error, 'authenticated 가 타인 user_id 로 삽입됨(사칭 차단 실패)');
+    // (2) authenticated: 본인 user_id 삽입 허용
+    const self = await uA.cli.from('emergency_logs')
+      .insert({ user_id: uA.id, latitude: p.lat, longitude: p.lng, address: tag });
+    ok(!self.error, '본인 SOS 삽입이 거부됨: ' + (self.error && self.error.message));
+    // (3) anon: 타인 user_id 삽입 거부
+    const anon = anonClient();
+    const anonSpoof = await anon.from('emergency_logs')
+      .insert({ user_id: uA.id, latitude: p.lat, longitude: p.lng, address: tag });
+    ok(anonSpoof.error, 'anon 이 임의 user_id 로 삽입됨(사칭 차단 실패)');
+    // (4) anon: user_id NULL 삽입 허용(비로그인 SOS 유지)
+    const anonNull = await anon.from('emergency_logs')
+      .insert({ user_id: null, latitude: p.lat, longitude: p.lng, address: tag });
+    ok(!anonNull.error, '비로그인 SOS(NULL) 삽입이 거부됨: ' + (anonNull.error && anonNull.error.message));
+    // (5) anon: SELECT 불가(권한 회수됨 → 에러이거나 0건)
+    const anonSel = await anon.from('emergency_logs').select('id').eq('address', tag);
+    ok(anonSel.error || (anonSel.data || []).length === 0,
+      `anon 이 SOS 행을 조회함(${(anonSel.data || []).length}건)`);
+    await admin.from('emergency_logs').delete().eq('address', tag);
+  }],
+
+  // ── emergency_logs S2/S5: 탈퇴 시 삭제(전체/NULL 개수 비교로 순서까지 검증) ────
+  ['emergency_logs: 탈퇴 시 본인 SOS 삭제(개수 검증)', async () => {
+    if (!admin) return 'skip';
+    const u = await makeUser('del-emlog'); const p = at(7); const tag = 'smoke-del-' + rand();
+    for (let i = 0; i < 2; i++) {
+      const r = await u.cli.from('emergency_logs')
+        .insert({ user_id: u.id, latitude: p.lat, longitude: p.lng, address: tag });
+      ok(!r.error, 'SOS insert 실패: ' + (r.error && r.error.message));
+    }
+    // cnt 헬퍼: 필터는 select('id',{count,head}) '뒤'에 붙여야 한다(from() 뒤에 붙이면 TypeError).
+    // 그래서 헬퍼는 '쿼리에 필터를 적용하는 함수'를 인자로 받는다.
+    const cnt = async (applyFilter) => {
+      let q = admin.from('emergency_logs').select('id', { count: 'exact', head: true });
+      if (applyFilter) q = applyFilter(q);
+      const { count, error } = await q;
+      ok(!error, 'emergency_logs count 에러: ' + (error && error.message));
+      return count || 0;
+    };
+    const totalB = await cnt();
+    const nullB  = await cnt(q => q.is('user_id', null));
+    const mineB  = await cnt(q => q.eq('user_id', u.id));
+    ok(mineB === 2, `본인 SOS 2건 아님(${mineB})`);
+
+    const del = await u.cli.functions.invoke('delete-account', { body: {} });
+    ok(!del.error, 'delete-account 호출 에러');
+
+    const totalA = await cnt();
+    const nullA  = await cnt(q => q.is('user_id', null));
+    const mineA  = await cnt(q => q.eq('user_id', u.id));
+    ok(mineA === 0,           `탈퇴 후 본인 SOS 행 잔존(${mineA})`);
+    ok(totalA === totalB - 2, `전체 행이 정확히 2 감소하지 않음(${totalB}→${totalA})`);
+    // 삭제가 deleteUser 보다 '먼저'면 FK SET NULL 로 바뀔 행이 없어 NULL 개수 불변.
+    // 순서가 뒤바뀌면 본인 2행이 NULL 로 승격돼 nullA = nullB + 2 로 FAIL 한다.
+    ok(nullA === nullB,       `NULL 행 개수 변동(${nullB}→${nullA}) — 삭제가 deleteUser 보다 늦음(순서 오류)`);
+    state.users = state.users.filter(x => x.id !== u.id);
+  }],
 ];
 
 const MANUAL = [
@@ -288,6 +370,8 @@ async function preclean() {
       await box(admin.from('zones').delete());
       await box(admin.from('reports').delete());
     }
+    // 이전 실행에서 남은 emergency_logs 테스트 행 정리(태그로만 → 실 SOS 데이터 무영향)
+    await admin.from('emergency_logs').delete().like('address', 'smoke-%');
     // 이전 실행에서 남은 smoke 테스트 유저 정리(profiles/데이터는 CASCADE·좌표정리로 처리됨)
     for (let page = 1; page <= 20; page++) {
       const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });

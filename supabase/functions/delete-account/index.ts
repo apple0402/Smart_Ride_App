@@ -9,7 +9,8 @@
 //   1) rides            → 삭제      (개인 데이터 완전 삭제)
 //   2) reports.user_id  → NULL      (신고 마커는 커뮤니티 자산 → 익명화 후 유지)
 //   3) zones 배열 익명화 → reporter_ids / safe_voter_ids 에서 본인 id 제거
-//   4) auth.admin.deleteUser        → profiles CASCADE 삭제, emergency_logs.user_id SET NULL
+//   4) emergency_logs   → 삭제      (⚠️ deleteUser 이전에! 사유는 5번 단계 주석 참고)
+//   5) auth.admin.deleteUser        → profiles CASCADE 삭제
 //
 // 진단성: 각 단계에 라벨(step)을 달고, 실패 시 어느 단계에서 무슨 이유로 실패했는지
 //         응답 본문과 함수 로그(console)에 함께 남긴다. 이렇게 하면 클라이언트가
@@ -117,7 +118,17 @@ Deno.serve(async (req) => {
     }
   }
 
-  // ── 5) auth 계정 삭제 (profiles CASCADE, emergency_logs SET NULL) ───────────
+  // ── 4-b) 긴급 SOS 로그 삭제 ─────────────────────────────────────────────────
+  //  ⚠️ 반드시 auth.deleteUser(아래 5) 이전에 실행할 것.
+  //  emergency_logs.user_id 는 auth.users(id) ON DELETE SET NULL 이므로, 계정을 먼저
+  //  지우면 이 유저의 SOS 행은 user_id 가 NULL 로 끊겨 where user_id = uid 로 더 이상
+  //  특정할 수 없다(익명 행으로 영구 잔존). 그래서 삭제를 deleteUser 앞에 둔다.
+  {
+    const { error } = await admin.from('emergency_logs').delete().eq('user_id', userId);
+    if (error) return fail('emergency_logs.delete', error);
+  }
+
+  // ── 5) auth 계정 삭제 (profiles CASCADE) ────────────────────────────────────
   {
     const { error } = await admin.auth.admin.deleteUser(userId);
     if (error) return fail('auth.deleteUser', error);

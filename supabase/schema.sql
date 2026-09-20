@@ -162,10 +162,12 @@ ALTER TABLE emergency_logs ENABLE ROW LEVEL SECURITY;
 
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='emergency_logs' AND policyname='emergency_logs_insert') THEN
-    CREATE POLICY "emergency_logs_insert" ON emergency_logs FOR INSERT WITH CHECK (true);
+    -- 로그인은 본인 id, 비로그인은 NULL 만 삽입 가능(타인 사칭 차단). 상세: 20260920_emergency_logs_hardening.sql
+    CREATE POLICY "emergency_logs_insert" ON emergency_logs FOR INSERT WITH CHECK (user_id = auth.uid() OR (auth.uid() IS NULL AND user_id IS NULL));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='emergency_logs' AND policyname='emergency_logs_select') THEN
-    CREATE POLICY "emergency_logs_select" ON emergency_logs FOR SELECT USING (auth.uid() = user_id OR auth.uid() IS NOT NULL);
+    -- 본인 행만 열람(익명 행은 service_role 만). 상세: 20260920_emergency_logs_hardening.sql
+    CREATE POLICY "emergency_logs_select" ON emergency_logs FOR SELECT USING (auth.uid() = user_id);
   END IF;
 END $$;
 
