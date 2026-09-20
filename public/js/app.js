@@ -10,7 +10,7 @@ const INITIAL_VIEW = [37.5665, 126.9780];
 const PRIVACY_POLICY_URL = '';
 
 // ── Map 초기화 (leaflet-rotate 지원, 줌 컨트롤 제거) ─────────────────────────
-const mapOptions = { zoomControl: false, attributionControl: false };
+const mapOptions = { zoomControl: false, attributionControl: true };
 if (L.Map.prototype.setBearing) Object.assign(mapOptions, { rotate: true, bearing: 0 });
 const map = L.map('map', mapOptions).setView(INITIAL_VIEW, 15);
 
@@ -20,7 +20,13 @@ const CARTO_API_KEY = (window.__SAFE_RIDE_ENV__ && window.__SAFE_RIDE_ENV__.CART
 const CARTO_TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
   + (CARTO_API_KEY ? '?key={apiKey}' : '');
 
-L.tileLayer(CARTO_TILE_URL, { maxZoom: 19, apiKey: CARTO_API_KEY }).addTo(map);
+L.tileLayer(CARTO_TILE_URL, {
+  maxZoom: 19,
+  apiKey: CARTO_API_KEY,
+  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>'
+}).addTo(map);
+// 저작권 표기를 하단 UI(통계 카드·우하단 FAB)와 겹치지 않는 좌하단으로 이동
+map.attributionControl.setPosition('bottomleft');
 // 줌 버튼, 내 위치 버튼 모두 제거 — GPS 자동 추적으로 대체
 
 // ── 라이더 마커 ────────────────────────────────────────────────────────────────
@@ -195,7 +201,7 @@ const NativeTTS = {
   getZoneMessage(zone) {
     // [5차 수정] 레거시 마커(desc/title 없음, 미등록 type)에서도 항상 유효한 한글 문장 반환
     if (!zone) return this.MESSAGES.other;
-    if (zone.type === 'other') return zone.desc || zone.title || this.MESSAGES.other;
+    if (zone.type === 'other') return this.MESSAGES.other;
     return this.MESSAGES[zone.type] || `${zoneLabel(zone)} 주의하세요`;
   },
 
@@ -1484,7 +1490,7 @@ const ZoneList = {
         <span class="text-2xl">${ZONE_ICONS[z.type]||'⚠️'}</span>
         <div class="flex-1">
           <div class="font-semibold text-sm text-white">${escHtml(zoneLabel(z))}</div>
-          <div class="text-xs text-slate-400 mt-0.5">${escHtml(z.desc || z.address || '')}</div>
+          <div class="text-xs text-slate-400 mt-0.5">${escHtml(z.address || '')}</div>
           <div class="text-xs text-slate-500 mt-0.5">신고 ${z.reportCount||1}건 · 안전투표 ${z.safeVotes||0}/3</div>
         </div>
         <span class="text-xs font-bold px-2 py-0.5 rounded-full border ${c} flex-shrink-0">${escHtml(sevLabel)}</span>
@@ -1518,7 +1524,6 @@ const Report = {
       return;
     }
     const pos  = GPS.lastPos;
-    const desc = document.getElementById('report-desc').value.trim();
 
     const btn = document.getElementById('report-submit-btn');
     if (btn) { btn.disabled = true; btn.textContent = '제출 중...'; }
@@ -1539,7 +1544,7 @@ const Report = {
 
       const result = await API.reportHazard({
         lat: pos.lat, lng: pos.lng,
-        type: this.selectedType, severity: this.selectedSev, desc, address,
+        type: this.selectedType, severity: this.selectedSev, address,
         gpsAccuracy: pos.accuracy
       });
 
@@ -1568,7 +1573,6 @@ const Report = {
       Toast.show(result.zone.confirmation === 'confirmed'
         ? '신고 제출 완료! 감사합니다 🙏'
         : '신고 접수 완료! 다른 라이더의 확인을 거쳐 정식 표시됩니다 🙏');
-      document.getElementById('report-desc').value = '';
       this.selectedType = null; this.selectedSev = 'medium';
       document.querySelectorAll('#report-type-grid .type-btn').forEach(b => b.classList.remove('selected'));
       document.querySelectorAll('#report-severity-grid .type-btn').forEach(b => {
@@ -1735,7 +1739,7 @@ const Ranking = {
         return `<div class="flex items-center gap-3 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5">
           <div class="w-6 text-center text-lg">${rank}</div>
           <div class="flex-1 min-w-0">
-            <div class="text-sm font-semibold text-white truncate">${escHtml(r.name || '익명 라이더')}</div>
+            <div class="text-sm font-semibold text-white truncate">라이더 ${i + 1}</div>
             <div class="text-[11px] text-slate-400">${lv.emoji} ${lv.name} · 확인 신고 ${r.confirmed_reports || 0}건</div>
           </div>
           <div class="text-right">
