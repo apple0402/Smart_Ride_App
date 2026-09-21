@@ -108,9 +108,8 @@
     #sos-info-btn { position:absolute;top:0;right:0;width:20px;height:20px;display:flex;align-items:center;justify-content:center;padding:0;background:transparent;color:#94a3b8;font-size:16px;line-height:1;border:none;cursor:pointer;font-family:system-ui,sans-serif;-webkit-tap-highlight-color:transparent;z-index:2; }
     #sos-info-btn::after { content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:44px;height:44px; }
     #sos-info-btn:active { color:#e2e8f0; }
-    /* 지도 저작권 표기 — 다크맵 가독성(기본 흰 칩이 튀는 것 방지) */
-    .leaflet-control-attribution { background:rgba(15,23,42,0.72) !important; color:#94a3b8 !important; font-size:10px; padding:1px 6px; border-radius:0 6px 0 0; margin:0 !important; }
-    .leaflet-control-attribution a { color:#cbd5e1 !important; }
+    /* 지도 저작권 표기는 지도 위 Leaflet 컨트롤이 아니라 하단 패널 맨 아래 줄에 정적 텍스트로
+       표시한다(attributionControl:false). 관련 .leaflet-control-attribution 스타일은 제거됨. */
   </style>
 </head>
 <body>
@@ -203,9 +202,11 @@
     class="w-full py-4 rounded-2xl font-bold text-base tracking-wide shadow-lg transition-all bg-green-500 hover:bg-green-400 active:scale-95 text-white">
     라이딩 시작
   </button>
-  <div class="mt-2 flex items-center justify-between">
-    <span class="text-slate-400 text-xs font-medium">Safe Ride</span>
-    <button onclick="Panels.openZoneList()" class="text-xs text-red-400 underline underline-offset-2">위험 구역 보기</button>
+  <div class="mt-2 flex items-center justify-between gap-2">
+    <!-- 지도 저작권 표기 — 지도 위 Leaflet 컨트롤(가려짐) 대신 이 줄 왼쪽에 정적 텍스트로 표기.
+         문구는 app.js tileLayer 의 attribution 과 동일. 링크는 앱 웹뷰 이탈 방지를 위해 제거(텍스트만). -->
+    <span style="flex:1;min-width:0;font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">© OpenStreetMap contributors © CARTO</span>
+    <button onclick="Panels.openZoneList()" class="text-xs text-red-400 underline underline-offset-2" style="flex:0 0 auto;white-space:nowrap;">위험 구역 보기</button>
   </div>
 </div>
 

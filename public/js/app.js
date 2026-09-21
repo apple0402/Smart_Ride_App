@@ -10,7 +10,7 @@ const INITIAL_VIEW = [37.5665, 126.9780];
 const PRIVACY_POLICY_URL = 'https://leeward-statistic-d90.notion.site/Safe-Ride-3e1695968b2c80c1a562f7459957f63f';
 
 // ── Map 초기화 (leaflet-rotate 지원, 줌 컨트롤 제거) ─────────────────────────
-const mapOptions = { zoomControl: false, attributionControl: true };
+const mapOptions = { zoomControl: false, attributionControl: false };
 if (L.Map.prototype.setBearing) Object.assign(mapOptions, { rotate: true, bearing: 0 });
 const map = L.map('map', mapOptions).setView(INITIAL_VIEW, 15);
 
@@ -25,8 +25,11 @@ L.tileLayer(CARTO_TILE_URL, {
   apiKey: CARTO_API_KEY,
   attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>'
 }).addTo(map);
-// 저작권 표기를 하단 UI(통계 카드·우하단 FAB)와 겹치지 않는 좌하단으로 이동
-map.attributionControl.setPosition('bottomleft');
+// 지도 위 저작권 컨트롤은 끈다(attributionControl:false — Leaflet 접두사도 함께 사라짐).
+// 실기기에서 지도 좌하단 표기가 하단 패널의 통계 카드에 반복적으로 가려지므로, 동일 문구를
+// 하단 패널 맨 아래 줄(#bottom-panel .mt-2, index.html)에 정적 텍스트로 표기한다.
+// ⚠️ 위 tileLayer 의 attribution(© OpenStreetMap contributors © CARTO)이 표기의 원본 문구다 —
+//    하단 줄 텍스트를 바꿀 땐 그 문구와 반드시 동일하게 유지할 것.
 // 줌 버튼, 내 위치 버튼 모두 제거 — GPS 자동 추적으로 대체
 
 // ── 라이더 마커 ────────────────────────────────────────────────────────────────
