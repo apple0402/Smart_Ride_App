@@ -7,7 +7,7 @@
 const INITIAL_VIEW = [37.5665, 126.9780];
 // 개인정보 처리방침 URL — 배포 전 실제 주소로 채울 것(값은 여기 한 곳만 수정).
 // 빈 값이면 build-prod.js 가 프로덕션 빌드 시 경고한다(공지: settings 링크는 안내 토스트만 표시).
-const PRIVACY_POLICY_URL = '';
+const PRIVACY_POLICY_URL = 'https://leeward-statistic-d90.notion.site/Safe-Ride-3e1695968b2c80c1a562f7459957f63f';
 
 // ── Map 초기화 (leaflet-rotate 지원, 줌 컨트롤 제거) ─────────────────────────
 const mapOptions = { zoomControl: false, attributionControl: true };
