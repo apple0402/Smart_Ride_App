@@ -754,6 +754,40 @@
     }
   });
 
+  // node_modules/@capacitor/browser/dist/esm/web.js
+  var web_exports3 = {};
+  __export(web_exports3, {
+    Browser: () => Browser,
+    BrowserWeb: () => BrowserWeb
+  });
+  var BrowserWeb, Browser;
+  var init_web3 = __esm({
+    "node_modules/@capacitor/browser/dist/esm/web.js"() {
+      init_dist();
+      BrowserWeb = class extends WebPlugin {
+        constructor() {
+          super();
+          this._lastWindow = null;
+        }
+        async open(options) {
+          this._lastWindow = window.open(options.url, options.windowName || "_blank");
+        }
+        async close() {
+          return new Promise((resolve, reject) => {
+            if (this._lastWindow != null) {
+              this._lastWindow.close();
+              this._lastWindow = null;
+              resolve();
+            } else {
+              reject("No active window to close!");
+            }
+          });
+        }
+      };
+      Browser = new BrowserWeb();
+    }
+  });
+
   // src/capacitor-bridge.js
   init_dist();
 
@@ -781,9 +815,15 @@
     web: () => Promise.resolve().then(() => (init_web2(), web_exports2)).then((m) => new m.NativeAudioWeb())
   });
 
+  // node_modules/@capacitor/browser/dist/esm/index.js
+  init_dist();
+  var Browser2 = registerPlugin("Browser", {
+    web: () => Promise.resolve().then(() => (init_web3(), web_exports3)).then((m) => new m.BrowserWeb())
+  });
+
   // src/capacitor-bridge.js
   var BackgroundSafety = registerPlugin("BackgroundSafety");
-  window.CapBridge = { TextToSpeech, NativeAudio, BackgroundSafety };
+  window.CapBridge = { TextToSpeech, NativeAudio, BackgroundSafety, Browser: Browser2 };
 })();
 /*! Bundled license information:
 
