@@ -156,6 +156,99 @@ router.delete('/api/zones/:id', async (req, res) => {
   res.json({ deleted: data[0].id });
 });
 
+// POST /admin/api/zones/bulk-delete — 여러 마커 일괄 삭제 (테스트 마커 정리용)
+// content_reports.hazard_id 는 ON DELETE CASCADE 라 관련 신고도 함께 정리된다.
+const BULK_DELETE_MAX = 200;
+router.post('/api/zones/bulk-delete', async (req, res) => {
+  const db = requireDb(res);
+  if (!db) return;
+
+  const raw = (req.body && req.body.ids) || [];
+  if (!Array.isArray(raw)) return res.status(400).json({ error: 'ids 는 배열이어야 합니다.' });
+  // 문자열 id만 취하고 중복 제거 후 상한 클램프 (한 요청으로 지나치게 많은 행을 지우지 않게)
+  const ids = [...new Set(raw.filter(x => typeof x === 'string' && x))].slice(0, BULK_DELETE_MAX);
+  if (!ids.length) return res.status(400).json({ error: '삭제할 마커를 하나 이상 선택해 주세요.' });
+
+  const { data, error } = await db
+    .from('zones').delete().in('id', ids).select('id');
+
+  if (error) return res.status(502).json({ error: error.message });
+  res.json({ deleted: (data || []).map(d => d.id), count: (data || []).length });
+});
+
+// ── 신고·차단 관리 ────────────────────────────────────────────────────────────
+// content_reports 는 service_role 로만 전량 조회된다(일반 유저는 RLS로 본인 것만).
+// zones(title) / profiles(name) 는 PostgREST 자동 조인 관계가 없어(FK 대상이 auth.users)
+// 서버에서 id 목록을 모아 별도 조회 후 JS로 이어 붙인다.
+const REPORT_STATUSES = ['pending', 'reviewed', 'dismissed'];
+
+// GET /admin/api/reports — 신고 목록(최신순) + 총 차단 건수
+router.get('/api/reports', async (req, res) => {
+  const db = requireDb(res);
+  if (!db) return;
+
+  const { data: reports, error } = await db
+    .from('content_reports')
+    .select('id, hazard_id, reporter_id, reported_user_id, reason, detail, status, created_at')
+    .order('created_at', { ascending: false })
+    .limit(500);
+  if (error) return res.status(502).json({ error: error.message });
+
+  const rows = reports || [];
+  const zoneIds = [...new Set(rows.map(r => r.hazard_id).filter(Boolean))];
+  const userIds = [...new Set(rows.flatMap(r => [r.reporter_id, r.reported_user_id]).filter(Boolean))];
+
+  // 대상 구역 제목 / 사용자 표시명을 한 번에 조회해 맵으로 만든다 (빈 목록이면 조회 생략)
+  const zoneTitle = new Map();
+  if (zoneIds.length) {
+    const { data: zs } = await db.from('zones').select('id, title').in('id', zoneIds);
+    (zs || []).forEach(z => zoneTitle.set(z.id, z.title));
+  }
+  const userName = new Map();
+  if (userIds.length) {
+    const { data: ps } = await db.from('profiles').select('id, name').in('id', userIds);
+    (ps || []).forEach(p => userName.set(p.id, p.name));
+  }
+
+  const enriched = rows.map(r => ({
+    id: r.id,
+    reason: r.reason,
+    detail: r.detail,
+    status: REPORT_STATUSES.includes(r.status) ? r.status : 'pending',
+    created_at: r.created_at,
+    hazard_id: r.hazard_id,
+    zone_title: r.hazard_id ? (zoneTitle.get(r.hazard_id) || null) : null,  // null = 이미 삭제된 구역
+    reporter_id: r.reporter_id,
+    reporter_name: userName.get(r.reporter_id) || null,
+    reported_user_id: r.reported_user_id,
+    reported_name: r.reported_user_id ? (userName.get(r.reported_user_id) || null) : null
+  }));
+
+  // 차단은 통계로만 — 총 건수만 반환
+  const { count } = await db
+    .from('blocked_users').select('id', { count: 'exact', head: true });
+
+  res.json({ reports: enriched, blockedCount: count || 0 });
+});
+
+// PATCH /admin/api/reports/:id — 신고 상태 변경 (pending → reviewed / dismissed 등)
+router.patch('/api/reports/:id', async (req, res) => {
+  const db = requireDb(res);
+  if (!db) return;
+
+  const status = (req.body || {}).status;
+  if (!REPORT_STATUSES.includes(status)) {
+    return res.status(400).json({ error: '상태 값이 올바르지 않습니다.' });
+  }
+
+  const { data, error } = await db
+    .from('content_reports').update({ status }).eq('id', req.params.id)
+    .select('id, status');
+  if (error) return res.status(502).json({ error: error.message });
+  if (!data || !data.length) return res.status(404).json({ error: '해당 신고를 찾을 수 없습니다.' });
+  res.json({ report: data[0] });
+});
+
 // ── 과거 마커 주소 일괄 복원 ──────────────────────────────────────────────────
 // 네이티브 앱의 geocode 상대 경로 버그로 address가 빈 채 저장된 행을 좌표로 채운다.
 // Nominatim 정책(초당 1건)을 지키려고 1.1초 간격 — 100건이면 2분이 넘어 요청 하나로 기다릴 수 없으므로

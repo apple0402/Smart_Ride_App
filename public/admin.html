@@ -61,6 +61,37 @@
 
     hr.sep { border:none; border-top:1px solid var(--line); margin:18px 0; }
 
+    /* 사이드바 탭 (지도 상세 / 마커 목록 / 신고 관리) */
+    #tabs { display:flex; border-bottom:1px solid var(--line); }
+    #tabs button { flex:1; width:auto; padding:11px 6px; border:none; border-radius:0; background:transparent;
+      color:var(--muted); font-size:13px; font-weight:600; border-bottom:2px solid transparent; }
+    #tabs button[aria-selected="true"] { color:var(--text); border-bottom-color:var(--accent); }
+
+    /* 마커 목록 (체크박스 일괄 삭제) */
+    .list-tools { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+    .list-tools label { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); margin:0; }
+    .list-tools .btn-del { width:auto; margin:0; margin-left:auto; padding:8px 14px; font-size:13px; }
+    .lrow { display:flex; align-items:flex-start; gap:10px; padding:10px 8px; border-bottom:1px solid var(--line);
+      cursor:pointer; border-radius:8px; }
+    .lrow:hover { background:#0f172a; }
+    .lrow input[type=checkbox] { width:16px; height:16px; margin-top:2px; flex-shrink:0; accent-color:var(--accent); }
+    .lrow .meta { flex:1; min-width:0; }
+    .lrow .t { font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .lrow .sub { font-size:11px; color:var(--muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+    /* 신고 카드 */
+    .stat { font-size:12px; color:var(--muted); margin-bottom:12px; }
+    .rcard { border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:12px; background:#0f172a; }
+    .rcard .rtop { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+    .rcard .reason { font-size:14px; font-weight:700; flex:1; }
+    .rcard .detail { font-size:12px; color:#cbd5e1; margin:6px 0; line-height:1.5; word-break:break-all; }
+    .rcard .rmeta { font-size:11px; color:var(--muted); line-height:1.7; }
+    .rcard .rmeta b { color:var(--text); font-weight:600; }
+    .rcard .zlink { color:var(--accent); cursor:pointer; text-decoration:underline; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; color:#0f172a; }
+    .rcard .ractions { display:flex; gap:8px; margin-top:10px; }
+    .rcard .ractions button { width:auto; flex:1; padding:8px; font-size:12px; }
+
     @media (max-width:820px) {
       #shell { flex-direction:column; }
       #map { height:52vh; flex:none; }
@@ -79,6 +110,11 @@
         <button id="repair" class="btn-ghost" style="margin-top:10px;padding:8px;font-size:12px">🛠️ 과거 마커 주소 일괄 복원</button>
         <button id="expire" class="btn-ghost" style="margin-top:6px;padding:8px;font-size:12px">🕒 90일 무활동 마커 정리</button>
       </header>
+      <div id="tabs">
+        <button data-tab="map"     aria-selected="true">🗺️ 지도 상세</button>
+        <button data-tab="list"    aria-selected="false">☑️ 마커 목록</button>
+        <button data-tab="reports" aria-selected="false">🚩 신고 관리</button>
+      </div>
       <div class="body" id="panel"></div>
     </aside>
   </div>
@@ -101,6 +137,22 @@ const ZONE_LABELS = {
   pothole:'포트홀 / 크랙', slippery:'미끄럼 주의', construction:'공사 구간', other:'기타 위험',
   wet_road:'젖은 노면', sharp_turn:'급커브', blind_spot:'사각지대',
   steep:'급경사', debris:'노면 장애물', general:'위험 구역'
+};
+
+// 확인 상태(confirmation)별 표시 — 폰 앱(public/js/app.js CONF_STYLE)과 동일 기준.
+// 확정 전(미확인/검토필요) 마커는 흐리게, 확정 후(confirmed)는 진하게 표시해 신뢰도를 구분한다.
+const CONF_STYLE = {
+  confirmed:     { opacity: 1.0,  label: '✅ 확인된 위험' },
+  unconfirmed:   { opacity: 0.55, label: '⏳ 미확인 제보' },
+  review_needed: { opacity: 0.35, label: '🔍 검토 필요'  }
+};
+const confOf = zone => CONF_STYLE[s(zone.confirmation)] || CONF_STYLE.confirmed;
+
+// 신고 상태(content_reports.status) 라벨/배지색
+const REPORT_STATUS = {
+  pending:   { label: '대기',    color: '#eab308' },
+  reviewed:  { label: '검토완료', color: '#22c55e' },
+  dismissed: { label: '기각',    color: '#94a3b8' }
 };
 
 // 과거 마커에는 address/description이 NULL인 행이 섞여 있다. 어떤 입력에도 문자열만 반환한다.
@@ -128,11 +180,13 @@ function markerIcon(zone, active) {
   const emoji = ZONE_ICONS[s(zone.type)] || '⚠️';
   const ring  = active ? '#38bdf8' : '#ffffff';
   const size  = active ? 40 : 32;
+  // 확정 전 마커는 폰 앱과 동일하게 흐리게. 단 선택 중인 마커는 편집을 위해 항상 선명하게 보인다.
+  const opacity = active ? 1 : confOf(zone).opacity;
   return L.divIcon({
     className: '',
     html: `<div style="background:${color};border-radius:50%;width:${size}px;height:${size}px;
       display:flex;align-items:center;justify-content:center;font-size:${active ? 18 : 15}px;
-      border:2px solid ${ring};box-shadow:0 2px 10px rgba(0,0,0,0.6)">${emoji}</div>`,
+      border:2px solid ${ring};box-shadow:0 2px 10px rgba(0,0,0,0.6);opacity:${opacity}">${emoji}</div>`,
     iconSize: [size, size], iconAnchor: [size / 2, size / 2]
   });
 }
@@ -223,7 +277,7 @@ function select(id) {
     const m = markers.get(k);
     if (z && m) m.setIcon(markerIcon(z, z.id === selected));
   });
-  renderDetail();
+  setTab('map');   // 마커 선택 시 항상 지도 상세 탭으로 전환
 }
 
 function renderDetail() {
@@ -316,7 +370,7 @@ function renderDetail() {
     field('고유 ID', z.id),
     field('한글 주소', z.address, '(주소 정보 없음 — 과거에 등록된 마커입니다)'),
     field('유형', ZONE_LABELS[typeKey] || typeKey, '(유형 없음)'),
-    field('상태', `${s(z.status) || 'active'} / ${s(z.confirmation) || '-'}`),
+    field('상태', `${s(z.status) || 'active'} · ${confOf(z).label} (${s(z.confirmation) || '-'})`),
     field('좌표', coords),
     field('제보 수', s(z.report_count)),
     field('등록 일시', createdText),
@@ -352,12 +406,207 @@ function toast(msg, isError) {
   toastTimer = setTimeout(() => t.remove(), isError ? 6000 : 2600);
 }
 
+// ── 탭 (지도 상세 / 마커 목록 / 신고 관리) ────────────────────────────────────
+let activeTab = 'map';
+
+function renderBody() {
+  if (activeTab === 'list')    return renderList();
+  if (activeTab === 'reports') return renderReports();
+  return renderDetail();
+}
+
+function setTab(name) {
+  activeTab = name;
+  document.querySelectorAll('#tabs button').forEach(b =>
+    b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+  renderBody();
+}
+
+document.querySelectorAll('#tabs button').forEach(b => {
+  b.onclick = () => setTab(b.dataset.tab);
+});
+
+// ── 마커 목록 (체크박스 일괄 삭제) ─────────────────────────────────────────────
+let listSelection = new Set();
+
+function renderList() {
+  // 이미 삭제된 마커는 선택 집합에서 정리
+  listSelection = new Set([...listSelection].filter(id => zones.some(z => z.id === id)));
+  if (!zones.length) return showEmpty('등록된 마커가 없습니다.');
+
+  const selectAll = el('input', { type:'checkbox' });
+  const delBtn    = el('button', { className:'btn-del', textContent:'🗑️ 선택 삭제' });
+
+  const syncTools = () => {
+    delBtn.textContent = listSelection.size ? `🗑️ 선택 ${listSelection.size}건 삭제` : '🗑️ 선택 삭제';
+    delBtn.disabled    = listSelection.size === 0;
+    selectAll.checked  = zones.length > 0 && listSelection.size === zones.length;
+  };
+
+  selectAll.onchange = () => {
+    if (selectAll.checked) zones.forEach(z => listSelection.add(z.id));
+    else listSelection.clear();
+    renderList();
+  };
+
+  const rows = zones.map(z => {
+    const cb = el('input', { type:'checkbox' });
+    cb.checked  = listSelection.has(z.id);
+    cb.onclick  = e => e.stopPropagation();   // 행 클릭(상세 이동)과 분리
+    cb.onchange = () => {
+      if (cb.checked) listSelection.add(z.id); else listSelection.delete(z.id);
+      syncTools();
+    };
+    const emoji = ZONE_ICONS[s(z.type)] || '⚠️';
+    const title = s(z.title).trim() || '(제목 없음)';
+    const addr  = s(z.address).trim() || s(z.id);
+    const row = el('div', { className:'lrow' }, [
+      cb,
+      el('div', { className:'meta' }, [
+        el('div', { className:'t',   textContent:`${emoji} ${title}` }),
+        el('div', { className:'sub', textContent:`${SEV_LABELS[s(z.severity)] || '주의'} · ${confOf(z).label} · ${addr}` })
+      ])
+    ]);
+    row.onclick = () => select(z.id);   // 행 클릭 → 지도 상세로 이동
+    return row;
+  });
+
+  delBtn.onclick = async () => {
+    const ids = [...listSelection];
+    if (!ids.length) return;
+    if (!confirm(`선택한 ${ids.length}건의 마커를 정말 삭제할까요?\n관련 신고 기록도 함께 삭제되며 되돌릴 수 없습니다.`)) return;
+    delBtn.disabled = true;
+    try {
+      const r = await api('/admin/api/zones/bulk-delete', 'POST', { ids });
+      const deleted = new Set(r.deleted || []);
+      zones = zones.filter(z => !deleted.has(z.id));
+      if (selected && deleted.has(selected)) selected = null;
+      reportsCache = null;   // 삭제로 신고가 정리됐을 수 있어 캐시 무효화
+      listSelection.clear();
+      renderMarkers();
+      renderList();
+      toast(`${r.count || 0}건의 마커를 삭제했습니다.`);
+    } catch (e) {
+      toast(e.message, true);
+      delBtn.disabled = false;
+    }
+  };
+
+  const tools = el('div', { className:'list-tools' }, [
+    el('label', {}, [selectAll, el('span', { textContent:'전체 선택' })]),
+    delBtn
+  ]);
+  syncTools();
+  panel.replaceChildren(tools, ...rows);
+}
+
+// ── 신고 관리 (content_reports) ────────────────────────────────────────────────
+let reportsCache   = null;
+let reportsLoading = false;
+
+async function loadReports(force) {
+  if (reportsLoading) return;
+  if (reportsCache && !force) return renderReports();
+  reportsLoading = true;
+  if (activeTab === 'reports') showEmpty('신고 목록을 불러오는 중…');
+  try {
+    reportsCache = await api('/admin/api/reports');
+  } catch (e) {
+    reportsCache = null;
+    reportsLoading = false;
+    if (activeTab === 'reports') showEmpty(`신고 목록을 불러오지 못했습니다.\n\n${e.message}`);
+    return;
+  }
+  reportsLoading = false;
+  if (activeTab === 'reports') renderReports();
+}
+
+function renderReports() {
+  if (!reportsCache) { loadReports(); return; }   // 최초 진입 시 로드 후 재호출됨
+  const reports = reportsCache.reports || [];
+  const blocked = reportsCache.blockedCount || 0;
+
+  const stat    = el('div', { className:'stat', textContent:`총 신고 ${reports.length}건 · 사용자 차단 ${blocked}건` });
+  const refresh = el('button', { className:'btn-ghost', textContent:'↻ 새로고침', style:'margin-bottom:14px' });
+  refresh.onclick = () => loadReports(true);
+
+  if (!reports.length) {
+    return panel.replaceChildren(stat, refresh,
+      el('p', { style:'color:#94a3b8;font-size:13px;margin:0', textContent:'접수된 신고가 없습니다.' }));
+  }
+  panel.replaceChildren(stat, refresh, ...reports.map(renderReportCard));
+}
+
+function renderReportCard(r) {
+  const st = REPORT_STATUS[r.status] || REPORT_STATUS.pending;
+  let when = s(r.created_at);
+  if (when) { const d = new Date(when); if (!isNaN(d.getTime())) when = d.toLocaleString('ko-KR'); }
+
+  const badge  = el('span', { className:'badge', textContent: st.label, style:`background:${st.color}` });
+  const reason = el('div', { className:'reason', textContent: s(r.reason) || '(사유 없음)' });
+  const children = [el('div', { className:'rtop' }, [reason, badge])];
+
+  if (s(r.detail).trim()) children.push(el('div', { className:'detail', textContent: s(r.detail).trim() }));
+
+  // 대상 구역: 지도에 남아 있으면 클릭해 이동, 이미 삭제됐으면 표기만
+  const zoneEl = el('div', { className:'rmeta' }, [el('span', { textContent:'대상 구역: ' })]);
+  const zoneExists = r.hazard_id && zones.some(z => z.id === r.hazard_id);
+  if (zoneExists) {
+    const link = el('span', { className:'zlink', textContent: s(r.zone_title) || r.hazard_id });
+    link.onclick = () => {
+      const z = zones.find(x => x.id === r.hazard_id);
+      select(r.hazard_id);
+      if (z && Number.isFinite(Number(z.lat)) && Number.isFinite(Number(z.lng))) {
+        map.setView([Number(z.lat), Number(z.lng)], 15);
+      }
+    };
+    zoneEl.appendChild(link);
+  } else {
+    zoneEl.appendChild(el('b', { textContent: (s(r.zone_title) || r.hazard_id || '(없음)') + (r.hazard_id ? ' (삭제됨)' : '') }));
+  }
+  children.push(zoneEl);
+
+  const line = (label, val) => el('div', {}, [el('span', { textContent: label }), el('b', { textContent: val })]);
+  children.push(el('div', { className:'rmeta' }, [
+    line('신고자: ',      s(r.reporter_name) || s(r.reporter_id) || '알 수 없음'),
+    line('최초 등록자: ', s(r.reported_name) || s(r.reported_user_id) || '—'),
+    el('div', { textContent:`접수: ${when}` })
+  ]));
+
+  // 상태 변경 버튼 — 현재 상태가 아닌 것만 노출
+  const actions = el('div', { className:'ractions' });
+  const setStatus = async status => {
+    actions.querySelectorAll('button').forEach(b => b.disabled = true);
+    try {
+      await api(`/admin/api/reports/${encodeURIComponent(r.id)}`, 'PATCH', { status });
+      r.status = status;   // 캐시 객체 갱신 후 재렌더
+      renderReports();
+      toast('신고 상태를 변경했습니다.');
+    } catch (e) {
+      toast(e.message, true);
+      actions.querySelectorAll('button').forEach(b => b.disabled = false);
+    }
+  };
+  const addAction = (status, cls, txt) => {
+    if (r.status === status) return;
+    const b = el('button', { className: cls, textContent: txt });
+    b.onclick = () => setStatus(status);
+    actions.appendChild(b);
+  };
+  addAction('reviewed',  'btn-save',  '✅ 검토완료');
+  addAction('dismissed', 'btn-ghost', '🚫 기각');
+  addAction('pending',   'btn-ghost', '↩ 대기로');
+  children.push(actions);
+
+  return el('div', { className:'rcard' }, children);
+}
+
 async function load() {
   try {
     const r = await api('/admin/api/zones');
     zones = Array.isArray(r.zones) ? r.zones : [];
     renderMarkers();
-    renderDetail();
+    renderBody();
   } catch (e) {
     document.getElementById('count').textContent = '불러오기 실패';
     showEmpty(`마커를 불러오지 못했습니다.\n\n${e.message}`);
