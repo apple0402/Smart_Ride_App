@@ -45,6 +45,8 @@ function _hav(lat1, lng1, lat2, lng2) {
 const API = {
 
   // ══ 위험구역 (활성 상태만 조회) ════════════════════════════════════════════
+  // 로그인 사용자가 차단한 사용자가 '최초 등록'(reporter_ids[0])한 구역은 결과에서 제외한다.
+  // (지도 마커·목록·네이티브 알림이 모두 이 결과를 쓰므로 한 곳에서 필터링하면 전 경로에 반영됨)
   async getZones() {
     const { data, error } = await sb
       .from('zones')
@@ -52,7 +54,10 @@ const API = {
       .eq('status', 'active')
       .order('created_at', { ascending: false });
     if (error) throw error;
-    return data.map(mapZone);
+    let zones = data.map(mapZone);
+    const blocked = await this.getBlockedIds();
+    if (blocked.size) zones = zones.filter(z => !blocked.has(z.reporterIds?.[0]));
+    return zones;
   },
 
   async getNearbyZones(lat, lng, radius = 500) {
@@ -161,6 +166,61 @@ const API = {
     const { data, error } = await sb.rpc('get_leaderboard', { p_limit: limit });
     if (error) return [];
     return data || [];
+  },
+
+  // ══ 콘텐츠 신고 · 사용자 차단 (App Review 대응) ═════════════════════════════
+  // 위험구역 마커(UGC) 신고. reporter_id 는 RLS 가 auth.uid() 로 강제하므로 여기서만 세팅.
+  // hazardId=zones.id(TEXT), reportedUserId=reporter_ids[0](최초 등록자, 없으면 null).
+  async reportContent({ hazardId, reportedUserId, reason, detail }) {
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) throw new Error('로그인이 필요합니다');
+    const { error } = await sb.from('content_reports').insert({
+      reporter_id:      user.id,
+      hazard_id:        hazardId || null,
+      reported_user_id: reportedUserId || null,
+      reason,
+      detail:           detail || null
+    });
+    if (error) throw new Error(error.message || '신고 처리 중 오류가 발생했습니다');
+  },
+
+  // 로그인 사용자가 차단한 blocked_id 집합 (getZones 필터용). 비로그인/오류 시 빈 Set.
+  async getBlockedIds() {
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) return new Set();
+    const { data, error } = await sb.from('blocked_users').select('blocked_id');
+    if (error) return new Set();
+    return new Set((data || []).map(r => r.blocked_id));
+  },
+
+  // 차단 목록 (설정 관리 화면용). 이름은 익명화 정책상 노출하지 않는다.
+  async getBlockedUsers() {
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) return [];
+    const { data, error } = await sb.from('blocked_users')
+      .select('blocked_id, created_at')
+      .order('created_at', { ascending: false });
+    if (error) return [];
+    return data || [];
+  },
+
+  async blockUser(blockedId) {
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) throw new Error('로그인이 필요합니다');
+    if (!blockedId) throw new Error('차단할 사용자를 찾을 수 없습니다');
+    // 이미 차단돼 있으면 UNIQUE 충돌 → 무시(멱등). 그 외 오류만 노출.
+    const { error } = await sb.from('blocked_users').insert({ blocker_id: user.id, blocked_id: blockedId });
+    if (error && error.code !== '23505') throw new Error(error.message || '차단 처리 중 오류가 발생했습니다');
+  },
+
+  async unblockUser(blockedId) {
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) throw new Error('로그인이 필요합니다');
+    const { error } = await sb.from('blocked_users')
+      .delete()
+      .eq('blocker_id', user.id)
+      .eq('blocked_id', blockedId);
+    if (error) throw new Error(error.message || '차단 해제 중 오류가 발생했습니다');
   },
 
   // ══ 인증 ═══════════════════════════════════════════════════════════════════

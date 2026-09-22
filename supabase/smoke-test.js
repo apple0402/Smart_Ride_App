@@ -193,6 +193,56 @@ const checks = [
     ok(!('name' in data[0]), '랭킹 행에 name 이 포함됨(익명화 실패)');
   }],
 
+  ['콘텐츠 신고 content_reports RLS(본인만 insert/select, 사칭·anon 거부)', async () => {
+    if (!admin) return 'skip';
+    const [u1, u2] = state.users;
+    const zoneId = state.zones[0];   // 스텝3에서 u1 이 만든 zone
+    // 정상: u2 가 u1 의 구역을 신고(reporter_id=본인)
+    const okIns = await u2.cli.from('content_reports').insert({
+      reporter_id: u2.id, hazard_id: zoneId, reported_user_id: u1.id, reason: '허위·장난성 신고'
+    });
+    ok(!okIns.error, '정상 신고 insert 실패: ' + (okIns.error && okIns.error.message));
+    // 사칭: reporter_id 를 타인(u1)으로 → RLS(WITH CHECK reporter_id=auth.uid()) 거부
+    const imp = await u2.cli.from('content_reports').insert({
+      reporter_id: u1.id, hazard_id: zoneId, reason: '기타', detail: '사칭'
+    });
+    ok(imp.error, 'reporter_id 사칭 insert 가 거부되지 않음');
+    // anon 거부
+    const an = await anonClient().from('content_reports').insert({
+      reporter_id: u1.id, hazard_id: zoneId, reason: 'x'
+    });
+    ok(an.error, 'anon content_reports insert 가 거부되지 않음');
+    // select 본인 것만: u2 는 보이고, u1(신고 안 함)은 0건
+    const mine   = await u2.cli.from('content_reports').select('id');
+    ok(!mine.error && (mine.data || []).length >= 1, `본인 신고 조회 실패(${mine.data && mine.data.length})`);
+    const others = await u1.cli.from('content_reports').select('id');
+    ok((others.data || []).length === 0, `u1 이 u2 의 신고를 조회함(${(others.data||[]).length}건, 본인 것만이어야)`);
+  }],
+
+  ['사용자 차단 blocked_users RLS(본인만 select/insert/delete, 사칭·자기차단 거부)', async () => {
+    if (!admin) return 'skip';
+    const [u1, u2] = state.users;
+    // 정상: u1 이 u2 차단
+    const blk = await u1.cli.from('blocked_users').insert({ blocker_id: u1.id, blocked_id: u2.id });
+    ok(!blk.error, 'u1→u2 차단 insert 실패: ' + (blk.error && blk.error.message));
+    // 사칭: blocker_id 를 타인(u2)으로 → 거부
+    const imp = await u1.cli.from('blocked_users').insert({ blocker_id: u2.id, blocked_id: u1.id });
+    ok(imp.error, 'blocker_id 사칭 insert 가 거부되지 않음');
+    // 자기 자신 차단 → CHECK(blocked_id<>blocker_id) 거부
+    const self = await u1.cli.from('blocked_users').insert({ blocker_id: u1.id, blocked_id: u1.id });
+    ok(self.error, '자기 자신 차단(CHECK)이 거부되지 않음');
+    // select 본인 것만
+    const mineB  = await u1.cli.from('blocked_users').select('blocked_id');
+    ok(!mineB.error && (mineB.data || []).some(r => r.blocked_id === u2.id), 'u1 차단목록에 u2 없음');
+    const otherB = await u2.cli.from('blocked_users').select('id');
+    ok((otherB.data || []).length === 0, `u2 가 u1 의 차단행을 조회함(${(otherB.data||[]).length}건)`);
+    // delete(차단 해제)
+    const del = await u1.cli.from('blocked_users').delete().eq('blocker_id', u1.id).eq('blocked_id', u2.id);
+    ok(!del.error, '차단 해제(delete) 실패: ' + (del.error && del.error.message));
+    const afterDel = await u1.cli.from('blocked_users').select('id');
+    ok((afterDel.data || []).length === 0, `차단 해제 후에도 행 잔존(${(afterDel.data||[]).length}건)`);
+  }],
+
   ['계정 삭제 Edge Function(delete-account) → 익명화·삭제·재로그인 불가', async () => {
     if (!admin) return 'skip';
     const u = state.users[2];

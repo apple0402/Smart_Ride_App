@@ -306,6 +306,61 @@
   <button onclick="Panels.closeAll()" class="mt-2 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">취소</button>
 </div>
 
+<!-- ── 콘텐츠 신고 · 사용자 차단 패널 (App Review 대응) ──────────────────────── -->
+<div id="content-report-panel" class="slide-panel" style="max-height:80vh;overflow-y:auto;">
+  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
+  <h2 class="font-bold text-lg mb-1">신고 및 차단</h2>
+  <p class="text-slate-400 text-sm mb-5">이 위험구역 정보에 문제가 있나요?</p>
+
+  <div class="mb-4">
+    <div class="text-xs text-slate-400 mb-3 font-medium uppercase tracking-wider">신고 사유</div>
+    <div class="space-y-2" id="content-report-reasons">
+      <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-700 cursor-pointer hover:bg-slate-800">
+        <input type="radio" name="cr-reason" value="실제로 위험하지 않음" class="accent-orange-500">
+        <span class="text-sm text-white">실제로 위험하지 않음</span>
+      </label>
+      <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-700 cursor-pointer hover:bg-slate-800">
+        <input type="radio" name="cr-reason" value="허위·장난성 신고" class="accent-orange-500">
+        <span class="text-sm text-white">허위·장난성 신고</span>
+      </label>
+      <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-700 cursor-pointer hover:bg-slate-800">
+        <input type="radio" name="cr-reason" value="부적절한 내용" class="accent-orange-500">
+        <span class="text-sm text-white">부적절한 내용</span>
+      </label>
+      <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-700 cursor-pointer hover:bg-slate-800">
+        <input type="radio" name="cr-reason" value="기타" class="accent-orange-500" onchange="ContentReport.onReasonChange()">
+        <span class="text-sm text-white">기타</span>
+      </label>
+    </div>
+    <textarea id="cr-detail" rows="3" placeholder="기타 사유를 입력해 주세요"
+      class="hidden mt-3 w-full bg-slate-800 border border-slate-600 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500"></textarea>
+  </div>
+
+  <button onclick="ContentReport.submit()" id="content-report-submit-btn"
+    class="w-full py-4 bg-orange-500 hover:bg-orange-400 text-white font-bold rounded-2xl transition-colors">
+    신고 제출
+  </button>
+
+  <div class="mt-6 pt-4 border-t border-slate-700">
+    <button onclick="ContentReport.block()" id="content-block-btn"
+      class="w-full py-3 bg-red-500/10 border border-red-500/40 text-red-300 hover:bg-red-500/20 font-semibold rounded-xl text-sm transition-colors">
+      이 사용자 차단
+    </button>
+    <p class="text-xs text-slate-500 mt-2 text-center">차단하면 이 사용자가 등록한 위험구역이 더 이상 보이지 않습니다.</p>
+  </div>
+
+  <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">취소</button>
+</div>
+
+<!-- ── 차단 목록 관리 패널 ──────────────────────────────────────────────────── -->
+<div id="blocked-list-panel" class="slide-panel" style="max-height:80vh;overflow-y:auto;">
+  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
+  <h2 class="font-bold text-lg mb-1">차단 목록</h2>
+  <p class="text-slate-400 text-sm mb-5">차단한 사용자를 관리합니다.</p>
+  <div id="blocked-list-items" class="space-y-2"></div>
+  <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">닫기</button>
+</div>
+
 <!-- ── 설정 패널 ────────────────────────────────────────────────────────────── -->
 <div id="settings-panel" class="slide-panel" style="max-height:80vh;overflow-y:auto;">
   <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
@@ -343,12 +398,17 @@
       </label>
     </div>
   </div>
-  <!-- 개인정보 처리방침 -->
+  <!-- 개인정보 처리방침 / 차단 목록 -->
   <div class="mt-6 pt-4 border-t border-slate-700">
     <button type="button" onclick="Settings.openPrivacyPolicy()"
       class="w-full flex items-center justify-between py-2 text-sm text-slate-300 hover:text-white transition-colors">
       <span>개인정보 처리방침</span>
       <span class="text-slate-500">↗</span>
+    </button>
+    <button type="button" onclick="Panels.openBlockedList()"
+      class="w-full flex items-center justify-between py-2 text-sm text-slate-300 hover:text-white transition-colors">
+      <span>차단 목록 관리</span>
+      <span class="text-slate-500">›</span>
     </button>
   </div>
   <button onclick="Settings.save()" class="mt-8 w-full py-4 bg-green-500 rounded-2xl text-sm font-bold text-white hover:bg-green-400 transition-colors">설정 저장</button>

@@ -535,6 +535,13 @@ function renderZones(zones) {
     const marker = L.marker([z.lat, z.lng], { icon }).addTo(zoneLayer);
     const popupDiv = document.createElement('div');
     popupDiv.style.cssText = 'max-width:260px;font-size:13px;line-height:1.6;overflow-wrap:anywhere';
+    // 신고·차단 버튼: 본인이 최초 등록한(reporter_ids[0]) 구역에는 숨긴다. 비로그인 탭 시 로그인 유도.
+    const isOwner = !!(Auth.user && z.reporterIds && z.reporterIds[0] === Auth.user.id);
+    const reportBtn = isOwner ? '' : `
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid #334155">
+        <button onclick="ContentReport.open(${JSON.stringify(z.id)})"
+          style="width:100%;background:rgba(249,115,22,0.15);color:#fdba74;border:1px solid rgba(249,115,22,0.4);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer">🚩 신고 · 차단</button>
+      </div>`;
     popupDiv.innerHTML = `
       <div style="font-weight:800;font-size:15px;margin-bottom:6px">${ZONE_ICONS[z.type]||'⚠️'} ${escHtml(zoneLabel(z))}</div>
       <div style="font-size:11px;margin-bottom:4px;color:#cbd5e1">${conf.label}</div>
@@ -542,6 +549,7 @@ function renderZones(zones) {
       <div style="color:#64748b;font-size:11px;margin-bottom:3px">📅 ${formatDate(z.createdAt)}</div>
       <div style="color:#86efac;font-size:11px;margin-bottom:6px">✅ 이젠 안전해요 (${z.safeVotes||0} / 3명 완료)</div>
       <div style="color:#f97316;font-size:11px">신고 수: ${z.reportCount || 1}</div>
+      ${reportBtn}
     `;
     marker.bindPopup(popupDiv, { maxWidth: 260 });
     marker.on('popupopen', () => {
@@ -1632,6 +1640,134 @@ const Settings = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 콘텐츠 신고 · 사용자 차단 모듈 (App Review 대응)
+//   기존 Report 모듈(위험 신고=zone 생성)과 별개. 이쪽은 이미 등록된 마커(UGC)를
+//   신고하거나 그 최초 등록자(reporter_ids[0])를 차단한다.
+// ═══════════════════════════════════════════════════════════════════════════
+const ContentReport = {
+  _zone: null,
+
+  open(zoneId) {
+    if (!Auth.user) {
+      Toast.show('신고·차단은 로그인이 필요합니다');
+      Panels.closeAll();
+      setTimeout(() => Auth.openPanel(), 300);
+      return;
+    }
+    const zone = allZones.find(z => z.id === zoneId);
+    if (!zone) { Toast.show('구역 정보를 찾을 수 없습니다'); return; }
+    // 본인이 최초 등록한 구역은 신고·차단 대상이 아니다(팝업 버튼도 숨겨져 있음).
+    if (zone.reporterIds && zone.reporterIds[0] === Auth.user.id) {
+      Toast.show('본인이 등록한 구역은 신고할 수 없습니다');
+      return;
+    }
+    this._zone = zone;
+    // 폼 리셋
+    document.querySelectorAll('input[name="cr-reason"]').forEach(r => { r.checked = false; });
+    const detail = document.getElementById('cr-detail');
+    detail.value = '';
+    detail.classList.add('hidden');
+    // 차단 버튼: 최초 등록자를 알 수 없으면(reporter_ids 비어있음) 비활성화
+    const blockBtn = document.getElementById('content-block-btn');
+    const hasOwner = !!(zone.reporterIds && zone.reporterIds[0]);
+    blockBtn.disabled = !hasOwner;
+    blockBtn.style.opacity = hasOwner ? '1' : '0.4';
+    Panels._open('content-report-panel');
+  },
+
+  onReasonChange() {
+    const isOther = document.querySelector('input[name="cr-reason"]:checked')?.value === '기타';
+    document.getElementById('cr-detail').classList.toggle('hidden', !isOther);
+  },
+
+  async submit() {
+    const zone = this._zone;
+    if (!zone) return;
+    const checked = document.querySelector('input[name="cr-reason"]:checked');
+    if (!checked) { Toast.show('신고 사유를 선택해 주세요'); return; }
+    const reason = checked.value;
+    const detail = reason === '기타' ? document.getElementById('cr-detail').value.trim() : '';
+    if (reason === '기타' && !detail) { Toast.show('기타 사유를 입력해 주세요'); return; }
+
+    const btn = document.getElementById('content-report-submit-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '제출 중...'; }
+    try {
+      await API.reportContent({
+        hazardId:       zone.id,
+        reportedUserId: (zone.reporterIds && zone.reporterIds[0]) || null,
+        reason,
+        detail
+      });
+      Panels.closeAll();
+      Toast.show('신고가 접수되었습니다');
+    } catch (e) {
+      Toast.show(e.message || '신고 제출에 실패했습니다');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '신고 제출'; }
+    }
+  },
+
+  async block() {
+    const zone = this._zone;
+    if (!zone) return;
+    const blockedId = zone.reporterIds && zone.reporterIds[0];
+    if (!blockedId) { Toast.show('차단할 사용자를 찾을 수 없습니다'); return; }
+    if (!confirm('이 사용자를 차단하면 이 사용자가 등록한 위험구역이 더 이상 보이지 않습니다. 차단할까요?')) return;
+    try {
+      await API.blockUser(blockedId);
+      // 차단한 사용자가 최초 등록한 구역을 지도·목록에서 즉시 제거
+      allZones = allZones.filter(z => !(z.reporterIds && z.reporterIds[0] === blockedId));
+      renderZones(allZones);
+      ZoneList.render();
+      updateNearbyCount();
+      Panels.closeAll();
+      Toast.show('차단되었습니다');
+    } catch (e) {
+      Toast.show(e.message || '차단에 실패했습니다');
+    }
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 차단 목록 관리 모듈
+// ═══════════════════════════════════════════════════════════════════════════
+const BlockList = {
+  async load() {
+    const el = document.getElementById('blocked-list-items');
+    el.innerHTML = `<div class="text-slate-500 text-sm text-center py-6">불러오는 중…</div>`;
+    let list = [];
+    try { list = await API.getBlockedUsers(); } catch { list = []; }
+    if (!list.length) {
+      el.innerHTML = `<div class="text-slate-500 text-sm text-center py-6">차단한 사용자가 없습니다</div>`;
+      return;
+    }
+    el.innerHTML = list.map(b => {
+      // 익명화 정책상 이름을 노출하지 않는다 — 차단일 + 식별자 일부만 표시.
+      const short = String(b.blocked_id).slice(0, 8);
+      return `<div class="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-700">
+        <div>
+          <div class="text-sm text-white">차단한 라이더</div>
+          <div class="text-xs text-slate-500 mt-0.5">${escHtml(short)}… · ${formatDate(b.created_at)}</div>
+        </div>
+        <button onclick="BlockList.unblock(${JSON.stringify(b.blocked_id)})"
+          class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 flex-shrink-0">차단 해제</button>
+      </div>`;
+    }).join('');
+  },
+
+  async unblock(blockedId) {
+    try {
+      await API.unblockUser(blockedId);
+      Toast.show('차단이 해제되었습니다');
+      await this.load();
+      loadZones();   // 숨겨졌던 마커 복원
+    } catch (e) {
+      Toast.show(e.message || '차단 해제에 실패했습니다');
+    }
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Panels 모듈
 // ═══════════════════════════════════════════════════════════════════════════
 const Panels = {
@@ -1641,7 +1777,7 @@ const Panels = {
     document.getElementById('panel-overlay').classList.add('open');
   },
   closeAll() {
-    ['zone-list-panel','report-panel','settings-panel','history-panel','auth-panel','profile-panel','ranking-panel']
+    ['zone-list-panel','report-panel','settings-panel','history-panel','auth-panel','profile-panel','ranking-panel','content-report-panel','blocked-list-panel']
       .forEach(id => document.getElementById(id).classList.remove('open'));
     document.getElementById('panel-overlay').classList.remove('open');
   },
@@ -1649,7 +1785,8 @@ const Panels = {
   openReport()    { this._open('report-panel'); },
   openSettings()  { Settings.load(); this._open('settings-panel'); },
   openHistory()   { History.load(); this._open('history-panel'); },
-  openProfile()   { Profile.open(); this._open('profile-panel'); }
+  openProfile()   { Profile.open(); this._open('profile-panel'); },
+  openBlockedList() { BlockList.load(); this._open('blocked-list-panel'); }
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
