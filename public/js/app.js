@@ -48,7 +48,6 @@ let riderMarker = null;
 
 // ── 레이어 그룹 ──────────────────────────────────────────────────────────────
 const zoneLayer   = L.layerGroup().addTo(map);
-const reportLayer = L.layerGroup().addTo(map);
 
 // ── 위험 유형 아이콘 ──────────────────────────────────────────────────────────
 const ZONE_ICONS = {
@@ -1576,14 +1575,6 @@ const Report = {
         const idx = allZones.findIndex(z => z.id === result.zone.id);
         if (idx !== -1) { allZones[idx] = result.zone; renderZones(allZones); }
       }
-
-      const rIcon = L.divIcon({
-        className: '',
-        html: `<div style="background:#f97316;border-radius:50%;width:16px;height:16px;border:2px solid white;opacity:0.9"></div>`,
-        iconSize: [16, 16], iconAnchor: [8, 8]
-      });
-      L.marker([pos.lat, pos.lng], { icon: rIcon }).addTo(reportLayer)
-       .bindPopup(`<div style="font-size:12px">${ZONE_ICONS[this.selectedType]||'⚠️'} ${ZONE_KOREAN[this.selectedType] || '위험'}</div>`);
 
       // 신고 포인트(+10)와 total_reports 증가는 submit_hazard_report RPC가 서버에서 처리한다.
       Panels.closeAll();
