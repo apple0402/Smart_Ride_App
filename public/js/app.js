@@ -539,7 +539,7 @@ function renderZones(zones) {
     const isOwner = !!(Auth.user && z.reporterIds && z.reporterIds[0] === Auth.user.id);
     const reportBtn = isOwner ? '' : `
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid #334155">
-        <button onclick="ContentReport.open(${JSON.stringify(z.id)})"
+        <button type="button" class="js-zone-report"
           style="width:100%;background:rgba(249,115,22,0.15);color:#fdba74;border:1px solid rgba(249,115,22,0.4);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer">🚩 신고 · 차단</button>
       </div>`;
     popupDiv.innerHTML = `
@@ -551,6 +551,13 @@ function renderZones(zones) {
       <div style="color:#f97316;font-size:11px">신고 수: ${z.reportCount || 1}</div>
       ${reportBtn}
     `;
+    // 신고·차단 버튼은 인라인 onclick 대신 DOM 리스너로 연결한다.
+    //   ① zone id 를 속성 문자열에 끼워 넣을 때 따옴표가 깨지는 문제 원천 차단,
+    //   ② L.DomEvent.stop 으로 팝업 내 클릭이 지도로 전파돼 삼켜지는 것도 방지(#1).
+    if (!isOwner) {
+      const rbtn = popupDiv.querySelector('.js-zone-report');
+      if (rbtn) L.DomEvent.on(rbtn, 'click', (e) => { L.DomEvent.stop(e); ContentReport.open(z.id); });
+    }
     marker.bindPopup(popupDiv, { maxWidth: 260 });
     marker.on('popupopen', () => {
       getAddress(z.lat, z.lng).then(addr => {
@@ -1749,10 +1756,14 @@ const BlockList = {
           <div class="text-sm text-white">차단한 라이더</div>
           <div class="text-xs text-slate-500 mt-0.5">${escHtml(short)}… · ${formatDate(b.created_at)}</div>
         </div>
-        <button onclick="BlockList.unblock(${JSON.stringify(b.blocked_id)})"
+        <button type="button" data-blocked-id="${escHtml(b.blocked_id)}"
           class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 flex-shrink-0">차단 해제</button>
       </div>`;
     }).join('');
+    // 인라인 onclick 대신 DOM 리스너로 연결(속성 문자열 따옴표 깨짐 방지 — 마커 버튼과 동일 원인).
+    el.querySelectorAll('button[data-blocked-id]').forEach(btn => {
+      btn.addEventListener('click', () => this.unblock(btn.dataset.blockedId));
+    });
   },
 
   async unblock(blockedId) {
