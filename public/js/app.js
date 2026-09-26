@@ -48,7 +48,6 @@ let riderMarker = null;
 
 // ── 레이어 그룹 ──────────────────────────────────────────────────────────────
 const zoneLayer   = L.layerGroup().addTo(map);
-const reportLayer = L.layerGroup().addTo(map);
 
 // ── 위험 유형 아이콘 ──────────────────────────────────────────────────────────
 const ZONE_ICONS = {
@@ -1547,22 +1546,14 @@ const Report = {
     if (btn) { btn.disabled = true; btn.textContent = '제출 중...'; }
 
     try {
-      // 네이티브 앱은 번들된 public/을 capacitor://localhost(iOS)·https://localhost(Android)에서 띄우므로
-      // 상대 경로가 Render에 닿지 않고 조용히 실패해 빈 주소로 저장됐다. 네이티브에서만 절대 주소를 쓴다.
-      // 잠든 무료 서버가 깨어나는 동안 신고가 묶이지 않도록 8초에서 끊는다(빈 주소는 상황실에서 복원 가능).
-      let address = '';
-      try {
-        const base  = window.Capacitor?.isNativePlatform?.() ? 'https://smart-ride-app-nrle.onrender.com' : '';
-        const ctrl  = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 8000);
-        const geoRes = await fetch(`${base}/api/geocode?lat=${pos.lat}&lng=${pos.lng}`, { signal: ctrl.signal });
-        address = (await geoRes.json()).address || '';
-        clearTimeout(timer);
-      } catch {}
-
+      // 주소 역지오코딩은 제출을 막지 않는다(비차단). 예전에는 Render 프록시(/api/geocode)를
+      // await 로 먼저 호출해, 무료 서버 콜드 스타트 때 최대 8초간 완료가 묶였다.
+      // 이제 빈 주소로 즉시 신고를 마치고(마커·토스트·패널), 주소는 아래에서 비동기로 채운다.
+      // (DB 저장 주소는 빈 값 → 상황실 '과거 마커 주소 일괄 복원'으로 보충. 마커 팝업은 열릴 때
+      //  getAddress 로 라이브 조회하므로 저장 주소와 무관하게 항상 정상 표시된다.)
       const result = await API.reportHazard({
         lat: pos.lat, lng: pos.lng,
-        type: this.selectedType, severity: this.selectedSev, address,
+        type: this.selectedType, severity: this.selectedSev, address: '',
         gpsAccuracy: pos.accuracy
       });
 
@@ -1571,19 +1562,17 @@ const Report = {
         renderZones(allZones);
         ZoneList.render();
         document.getElementById('danger-count-text').textContent = `주변 ${allZones.length}개 위험`;
+        // 비차단 역지오코딩 — 완료되면 메모리상 zone 에 주소를 채우고 목록·투표창 부제를 갱신한다.
+        // getAddress 는 실패해도 좌표 문자열을 반환(throw 없음)하고, 팝업이 쓰는 캐시도 함께 데운다.
+        getAddress(result.zone.lat, result.zone.lng).then(addr => {
+          result.zone.address = addr;   // allZones 가 같은 객체를 참조하므로 즉시 반영됨
+          ZoneList.render();
+        });
       } else {
         // 기존 zone 갱신 — reportCount/confirmation(승격 여부) 등 최신 상태로 통째 교체
         const idx = allZones.findIndex(z => z.id === result.zone.id);
         if (idx !== -1) { allZones[idx] = result.zone; renderZones(allZones); }
       }
-
-      const rIcon = L.divIcon({
-        className: '',
-        html: `<div style="background:#f97316;border-radius:50%;width:16px;height:16px;border:2px solid white;opacity:0.9"></div>`,
-        iconSize: [16, 16], iconAnchor: [8, 8]
-      });
-      L.marker([pos.lat, pos.lng], { icon: rIcon }).addTo(reportLayer)
-       .bindPopup(`<div style="font-size:12px">${ZONE_ICONS[this.selectedType]||'⚠️'} ${ZONE_KOREAN[this.selectedType] || '위험'}</div>`);
 
       // 신고 포인트(+10)와 total_reports 증가는 submit_hazard_report RPC가 서버에서 처리한다.
       Panels.closeAll();
