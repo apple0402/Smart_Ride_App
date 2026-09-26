@@ -1,3 +1,6 @@
+-- ⚠️ 재실행 금지 — 20260926_prod_rls_lockdown의 권한 회수를 되돌림
+--    (line 32의 GRANT SELECT ON ALL TABLES ... TO anon, authenticated 등이
+--     reports/rides/profiles에 대한 anon SELECT를 재개방한다.)
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Safe Ride — API 롤(service_role / authenticated / anon) 테이블 권한 복원
 --
