@@ -1780,6 +1780,8 @@ const Panels = {
     ['zone-list-panel','report-panel','settings-panel','history-panel','auth-panel','profile-panel','ranking-panel','content-report-panel','blocked-list-panel']
       .forEach(id => document.getElementById(id).classList.remove('open'));
     document.getElementById('panel-overlay').classList.remove('open');
+    // 패널을 닫으면 인증 입력값(비밀번호 포함)을 초기화한다.
+    if (typeof Auth !== 'undefined') Auth.clearForms();
   },
   openZoneList()  { ZoneList.render(); this._open('zone-list-panel'); },
   openReport()    { this._open('report-panel'); },
@@ -2084,6 +2086,17 @@ const Auth = {
     document.getElementById('form-sent').classList.toggle('hidden',   v !== 'sent');
     // 로그인 화면으로 돌아오면 미인증 재발송 버튼은 기본 숨김
     if (v === 'login') document.getElementById('login-resend-wrap')?.classList.add('hidden');
+    // 화면 전환 시 비밀번호는 항상 비운다(이메일 prefill 등 다른 값은 보존).
+    this.clearForms({ passwordsOnly: true });
+  },
+
+  // 인증 입력값 초기화. passwordsOnly=true 면 비밀번호 필드만, 아니면 전체 비움.
+  // (비밀번호 필드는 어느 경우든 항상 비워진다.)
+  clearForms(opts) {
+    const ids = (opts && opts.passwordsOnly)
+      ? ['login-pw', 'signup-pw']
+      : ['login-email', 'login-pw', 'signup-name', 'signup-email', 'signup-pw'];
+    ids.forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
   },
 
   async login() {
