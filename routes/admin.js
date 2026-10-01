@@ -76,7 +76,7 @@ function adminGuard(req, res, next) {
 router.use(express.json({ limit: '32kb' }));
 
 const SEVERITIES = ['high', 'medium', 'low'];
-const ZONE_COLUMNS = 'id, lat, lng, title, type, description, address, severity, report_count, status, confirmation, last_activity_at, created_at';
+const ZONE_COLUMNS = 'id, lat, lng, title, type, description, address, severity, report_count, status, confirmation, admin_confirmed_at, last_activity_at, created_at';
 
 // GET /admin/api/zones — 전국 마커 전량
 router.get('/api/zones', async (req, res) => {
@@ -131,6 +131,30 @@ router.post('/api/zones/:id/close', async (req, res) => {
   if (error) return res.status(502).json({ error: error.message });
   if (!data || !data.length) return res.status(404).json({ error: '해당 마커를 찾을 수 없습니다.' });
   res.json({ zone: data[0] });
+});
+
+// POST /admin/api/zones/:id/confirm — 운영자 확인 (confirmed + 90일 만료 연장)
+// service_role 전용 RPC(admin_confirm_zone)만 호출. profiles 는 건드리지 않는다.
+router.post('/api/zones/:id/confirm', async (req, res) => {
+  const db = requireDb(res);
+  if (!db) return;
+
+  const { data, error } = await db.rpc('admin_confirm_zone', { p_zone_id: req.params.id });
+  // RPC 가 던지는 업무 예외(구역 없음/비활성)는 사용자용 메시지라 400 으로 그대로 전달한다.
+  if (error) return res.status(400).json({ error: error.message });
+  console.log(`[admin] confirm zone ${req.params.id} (${(data && data.title) || ''}) @ ${new Date().toISOString()}`);
+  res.json({ zone: data });
+});
+
+// POST /admin/api/zones/:id/unconfirm — 운영자 확인 해제 (직전 confirmation 복원)
+router.post('/api/zones/:id/unconfirm', async (req, res) => {
+  const db = requireDb(res);
+  if (!db) return;
+
+  const { data, error } = await db.rpc('admin_unconfirm_zone', { p_zone_id: req.params.id });
+  if (error) return res.status(400).json({ error: error.message });
+  console.log(`[admin] unconfirm zone ${req.params.id} (${(data && data.title) || ''}) @ ${new Date().toISOString()}`);
+  res.json({ zone: data });
 });
 
 // POST /admin/api/expire-stale — 90일 무활동 마커 일괄 만료 (수동 트리거)

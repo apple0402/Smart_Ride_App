@@ -158,6 +158,20 @@ const REPORT_STATUS = {
 // 과거 마커에는 address/description이 NULL인 행이 섞여 있다. 어떤 입력에도 문자열만 반환한다.
 const s = v => (v === null || v === undefined) ? '' : String(v);
 
+// 90일 무활동(만료 대상) 판정 — 서버 expire_stale_zones() 와 동일 기준:
+// status='active' 이면서 last_activity_at(없으면 created_at)이 90일 이상 지난 마커.
+const STALE_MS = 90 * 24 * 60 * 60 * 1000;
+function staleRefMs(z) {
+  const t = z.last_activity_at || z.created_at;
+  const d = t ? new Date(t) : null;
+  return (d && !isNaN(d.getTime())) ? d.getTime() : null;
+}
+function isStale(z) {
+  if (s(z.status) && s(z.status) !== 'active') return false;
+  const ms = staleRefMs(z);
+  return ms !== null && ms < (Date.now() - STALE_MS);
+}
+
 // ── 지도 ──────────────────────────────────────────────────────────────────────
 const map = L.map('map', { zoomControl:true }).setView([36.5, 127.8], 7);
 L.tileLayer(CARTO_TILE_URL, { maxZoom:19, apiKey:CARTO_API_KEY, attribution:'&copy; OpenStreetMap, &copy; CARTO' }).addTo(map);
@@ -325,6 +339,57 @@ function renderDetail() {
     };
   }
 
+  // ── 운영자 확인 / 확인 해제 ──────────────────────────────────────────────────
+  // 확인: active 마커를 confirmed 로 올리고 만료 90일 연장. 이미 확인됐으면 "재확인"(연장).
+  // 해제: 운영자 확인 상태(admin_confirmed_at)인 마커만. 확인 직전 상태로 되돌린다.
+  const disableAll = (on) => panel.querySelectorAll('button').forEach(b => b.disabled = on);
+
+  let confirmBtn = null, unconfirmBtn = null;
+  if (s(z.status) === 'active') {
+    const already = !!z.admin_confirmed_at;
+    confirmBtn = el('button', { className:'btn-save', style:'margin-top:8px',
+      textContent: already ? '✅ 재확인 (만료 90일 연장)' : '✅ 운영자 확인 (지도에 진하게)' });
+    confirmBtn.onclick = async () => {
+      let msg = already
+        ? '이미 운영자 확인된 마커입니다.\n다시 확인해 만료를 90일 연장할까요?'
+        : '이 마커를 운영자 확인 처리할까요?\n지도에 "확인된 위험"으로 진하게 표시되고, 만료가 90일 연장됩니다.';
+      if (s(z.confirmation) === 'review_needed') {
+        msg = '⚠️ 이 마커는 "검토 필요"(신뢰도 낮은 제보) 상태입니다.\n' +
+              '내용을 직접 확인하셨나요? 운영자 확인하면 지도에 정식 노출됩니다.\n\n' + msg;
+      }
+      if (!confirm(msg)) return;
+      disableAll(true);
+      try {
+        const r = await api(`/admin/api/zones/${encodeURIComponent(z.id)}/confirm`, 'POST');
+        Object.assign(z, r.zone);
+        renderMarkers();
+        renderDetail();
+        toast('운영자 확인 처리했습니다.');
+      } catch (e) {
+        toast(e.message, true);
+        disableAll(false);
+      }
+    };
+  }
+  if (z.admin_confirmed_at) {
+    unconfirmBtn = el('button', { className:'btn-ghost', style:'margin-top:8px',
+      textContent:'↩️ 운영자 확인 해제' });
+    unconfirmBtn.onclick = async () => {
+      if (!confirm('운영자 확인을 해제할까요?\n확인 직전 상태로 되돌립니다. (만료 연장분은 유지됩니다)')) return;
+      disableAll(true);
+      try {
+        const r = await api(`/admin/api/zones/${encodeURIComponent(z.id)}/unconfirm`, 'POST');
+        Object.assign(z, r.zone);
+        renderMarkers();
+        renderDetail();
+        toast('운영자 확인을 해제했습니다.');
+      } catch (e) {
+        toast(e.message, true);
+        disableAll(false);
+      }
+    };
+  }
+
   saveBtn.onclick = async () => {
     const title = titleInput.value.trim();
     if (!title) return toast('제목은 비울 수 없습니다.', true);
@@ -370,7 +435,9 @@ function renderDetail() {
     field('고유 ID', z.id),
     field('한글 주소', z.address, '(주소 정보 없음 — 과거에 등록된 마커입니다)'),
     field('유형', ZONE_LABELS[typeKey] || typeKey, '(유형 없음)'),
-    field('상태', `${s(z.status) || 'active'} · ${confOf(z).label} (${s(z.confirmation) || '-'})`),
+    field('상태', `${s(z.status) || 'active'} · ${confOf(z).label} (${s(z.confirmation) || '-'})`
+      + (isStale(z) ? ' · ⏰ 90일 경과(만료 대상)' : '')),
+    field('운영자 확인', z.admin_confirmed_at ? new Date(z.admin_confirmed_at).toLocaleString('ko-KR') : '', '(미확인)'),
     field('좌표', coords),
     field('제보 수', s(z.report_count)),
     field('등록 일시', createdText),
@@ -379,6 +446,8 @@ function renderDetail() {
     el('div', { className:'row' }, [el('label', { textContent:'설명 (description)' }), descInput]),
     el('div', { className:'row' }, [el('label', { textContent:'위험도 (severity)' }), sevSelect]),
     saveBtn,
+    confirmBtn,
+    unconfirmBtn,
     closeBtn,
     delBtn
   ].filter(Boolean));
@@ -427,12 +496,20 @@ document.querySelectorAll('#tabs button').forEach(b => {
 });
 
 // ── 마커 목록 (체크박스 일괄 삭제) ─────────────────────────────────────────────
-let listSelection = new Set();
+let listSelection  = new Set();
+let listStaleOnly  = false;   // 만료 대상(90일 경과)만 보기
+let listSortOldest = false;   // 활동 오래된 순 정렬(만료 임박 우선)
 
 function renderList() {
   // 이미 삭제된 마커는 선택 집합에서 정리
   listSelection = new Set([...listSelection].filter(id => zones.some(z => z.id === id)));
   if (!zones.length) return showEmpty('등록된 마커가 없습니다.');
+
+  // 필터/정렬을 적용한 표시 목록(items). 선택·전체선택은 '보이는 것' 기준으로 동작한다.
+  const staleCount = zones.filter(isStale).length;
+  let items = zones.slice();
+  if (listStaleOnly)  items = items.filter(isStale);
+  if (listSortOldest) items.sort((a, b) => (staleRefMs(a) ?? Infinity) - (staleRefMs(b) ?? Infinity));
 
   const selectAll = el('input', { type:'checkbox' });
   const delBtn    = el('button', { className:'btn-del', textContent:'🗑️ 선택 삭제' });
@@ -440,16 +517,24 @@ function renderList() {
   const syncTools = () => {
     delBtn.textContent = listSelection.size ? `🗑️ 선택 ${listSelection.size}건 삭제` : '🗑️ 선택 삭제';
     delBtn.disabled    = listSelection.size === 0;
-    selectAll.checked  = zones.length > 0 && listSelection.size === zones.length;
+    selectAll.checked  = items.length > 0 && items.every(z => listSelection.has(z.id));
   };
 
   selectAll.onchange = () => {
-    if (selectAll.checked) zones.forEach(z => listSelection.add(z.id));
-    else listSelection.clear();
+    if (selectAll.checked) items.forEach(z => listSelection.add(z.id));
+    else items.forEach(z => listSelection.delete(z.id));
     renderList();
   };
 
-  const rows = zones.map(z => {
+  const staleToggle = el('input', { type:'checkbox' });
+  staleToggle.checked  = listStaleOnly;
+  staleToggle.onchange = () => { listStaleOnly = staleToggle.checked; renderList(); };
+
+  const sortToggle = el('input', { type:'checkbox' });
+  sortToggle.checked  = listSortOldest;
+  sortToggle.onchange = () => { listSortOldest = sortToggle.checked; renderList(); };
+
+  const rows = items.map(z => {
     const cb = el('input', { type:'checkbox' });
     cb.checked  = listSelection.has(z.id);
     cb.onclick  = e => e.stopPropagation();   // 행 클릭(상세 이동)과 분리
@@ -460,10 +545,17 @@ function renderList() {
     const emoji = ZONE_ICONS[s(z.type)] || '⚠️';
     const title = s(z.title).trim() || '(제목 없음)';
     const addr  = s(z.address).trim() || s(z.id);
+    const titleEl = el('div', { className:'t', textContent:`${emoji} ${title}` });
+    if (isStale(z)) {
+      titleEl.appendChild(el('span', {
+        textContent:' ⏰ 만료대상',
+        style:'color:#ef4444;font-size:11px;font-weight:700;margin-left:4px'
+      }));
+    }
     const row = el('div', { className:'lrow' }, [
       cb,
       el('div', { className:'meta' }, [
-        el('div', { className:'t',   textContent:`${emoji} ${title}` }),
+        titleEl,
         el('div', { className:'sub', textContent:`${SEV_LABELS[s(z.severity)] || '주의'} · ${confOf(z).label} · ${addr}` })
       ])
     ]);
@@ -494,10 +586,14 @@ function renderList() {
 
   const tools = el('div', { className:'list-tools' }, [
     el('label', {}, [selectAll, el('span', { textContent:'전체 선택' })]),
+    el('label', {}, [staleToggle, el('span', { textContent:`⏰ 만료 대상만 (${staleCount})` })]),
+    el('label', {}, [sortToggle,  el('span', { textContent:'활동 오래된 순' })]),
     delBtn
   ]);
   syncTools();
-  panel.replaceChildren(tools, ...rows);
+  const emptyNote = items.length ? null
+    : el('p', { style:'color:#94a3b8;font-size:13px;margin:12px 2px 0', textContent:'조건에 맞는 마커가 없습니다.' });
+  panel.replaceChildren(...[tools, emptyNote, ...rows].filter(Boolean));
 }
 
 // ── 신고 관리 (content_reports) ────────────────────────────────────────────────
@@ -659,7 +755,11 @@ repairBtn.onclick = async () => {
 // 90일 무활동 마커 일괄 만료
 document.getElementById('expire').onclick = async () => {
   const btn = document.getElementById('expire');
-  if (!confirm('90일간 신규 신고·투표가 없는 활성 마커를 일괄 종료(expired)합니다.\n계속할까요?')) return;
+  // 만료 예정 개수는 '필터와 무관하게' 전체 활성 마커 기준으로 센다.
+  const staleCount = zones.filter(isStale).length;
+  if (!staleCount) { toast('만료 대상(90일 무활동) 마커가 없습니다.'); return; }
+  if (!confirm(`90일간 신규 신고·투표가 없는 활성 마커 ${staleCount}건을 일괄 종료(expired)합니다.\n`
+             + '(운영자 확인한 마커는 확인 시점부터 90일 연장됩니다.)\n\n계속할까요?')) return;
   btn.disabled = true;
   try {
     const r = await api('/admin/api/expire-stale', 'POST');
