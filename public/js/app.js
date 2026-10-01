@@ -1992,11 +1992,33 @@ const VerificationModal = {
   }
 };
 
+// Supabase 인증 에러 → 한국어 안내. error.code 우선, 없으면 메시지 패턴으로 판정.
+function authErrorMessage(res) {
+  const code = (res && res.code) || '';
+  const msg  = ((res && res.error) || '').toLowerCase();
+  if (code === 'invalid_credentials'       || msg.includes('invalid login'))      return '이메일 또는 비밀번호가 올바르지 않습니다';
+  if (code === 'email_not_confirmed'       || msg.includes('email not confirmed'))return '이메일 인증이 완료되지 않았습니다. 받은 메일의 링크를 눌러 인증해 주세요';
+  if (code === 'weak_password'             || msg.includes('password should'))    return '비밀번호는 8자 이상이며 영문과 숫자를 포함해야 합니다';
+  if (code === 'over_email_send_rate_limit'|| msg.includes('rate limit'))         return '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요';
+  if (code === 'user_already_exists'       || msg.includes('already registered')) return '이미 가입된 이메일입니다';
+  if (msg.includes('failed to fetch')      || msg.includes('network'))            return '네트워크 연결을 확인해 주세요';
+  return (res && res.error) || '처리 중 오류가 발생했습니다';
+}
+
+// 비밀번호 정책: 최소 8자 + 영문 + 숫자 (서버 정책과 동일). 통과 시 null, 실패 시 안내 문구.
+function validatePassword(pw) {
+  if (!pw || pw.length < 8)                       return '비밀번호는 8자 이상이어야 합니다';
+  if (!/[A-Za-z]/.test(pw) || !/[0-9]/.test(pw)) return '비밀번호는 영문과 숫자를 모두 포함해야 합니다';
+  return null;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Auth 모듈 — 회원가입 최적화 + 이메일 인증 처리
 // ═══════════════════════════════════════════════════════════════════════════
 const Auth = {
   user: null,
+  _pendingEmail: '',   // 방금 가입/미인증 로그인한 이메일 (재발송 대상)
+  _resendTimer: null,  // 재발송 60초 카운트다운 타이머
 
   async init() {
     // 이메일 인증 링크 감지
@@ -2050,15 +2072,18 @@ const Auth = {
 
   openPanel() {
     if (this.user) { Panels.openProfile(); return; }
+    this.switchTab('login');        // 항상 로그인 화면으로 열기
     Panels._open('auth-panel');
   },
 
-  switchTab(tab) {
-    const isLogin = tab === 'login';
-    document.getElementById('form-login').classList.toggle('hidden', !isLogin);
-    document.getElementById('form-signup').classList.toggle('hidden', isLogin);
-    document.getElementById('tab-login').className  = `flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${isLogin  ? 'bg-slate-700 text-white' : 'text-slate-400'}`;
-    document.getElementById('tab-signup').className = `flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${!isLogin ? 'bg-slate-700 text-white' : 'text-slate-400'}`;
+  // 뷰 전환: 'login' | 'signup' | 'sent'
+  switchTab(view) {
+    const v = (view === 'signup') ? 'signup' : (view === 'sent') ? 'sent' : 'login';
+    document.getElementById('form-login').classList.toggle('hidden',  v !== 'login');
+    document.getElementById('form-signup').classList.toggle('hidden', v !== 'signup');
+    document.getElementById('form-sent').classList.toggle('hidden',   v !== 'sent');
+    // 로그인 화면으로 돌아오면 미인증 재발송 버튼은 기본 숨김
+    if (v === 'login') document.getElementById('login-resend-wrap')?.classList.add('hidden');
   },
 
   async login() {
@@ -2070,7 +2095,16 @@ const Auth = {
     if (btn) { btn.disabled = true; btn.textContent = '로그인 중...'; }
     try {
       const res = await API.login(email, pw);
-      if (res.error) { Toast.show(res.error); return; }
+      if (res.error) {
+        Toast.show(authErrorMessage(res));
+        // 미인증 이메일이면 재발송 버튼 노출
+        const wrap = document.getElementById('login-resend-wrap');
+        const unconfirmed = res.code === 'email_not_confirmed'
+          || (res.error || '').toLowerCase().includes('email not confirmed');
+        if (unconfirmed) { this._pendingEmail = email; wrap?.classList.remove('hidden'); }
+        else wrap?.classList.add('hidden');
+        return;
+      }
       Panels.closeAll();
       Toast.show(`환영합니다, ${res.name}! 🚴`);
     } catch { Toast.show('연결 오류가 발생했습니다'); }
@@ -2082,17 +2116,62 @@ const Auth = {
     const email = document.getElementById('signup-email').value.trim();
     const pw    = document.getElementById('signup-pw').value;
     if (!name || !email || !pw) { Toast.show('모든 항목을 입력하세요'); return; }
-    if (pw.length < 6) { Toast.show('비밀번호는 6자 이상이어야 합니다'); return; }
+    const pwErr = validatePassword(pw);
+    if (pwErr) { Toast.show(pwErr); return; }
 
     const btn = document.getElementById('signup-btn');
     if (btn) { btn.disabled = true; btn.textContent = '처리 중...'; }
     try {
       const res = await API.signup(email, pw, name);
-      if (res.error) { Toast.show(res.error); return; }
-      Panels.closeAll();
-      Toast.show('가입 완료! 인증 이메일을 확인해 주세요 📧');
+      if (res.error) { Toast.show(authErrorMessage(res)); return; }
+      // 이미 가입된 이메일(Confirm email ON → identities 빈 배열) → 로그인 화면으로
+      if (Array.isArray(res.identities) && res.identities.length === 0) {
+        Toast.show('이미 가입된 이메일입니다. 로그인해 주세요');
+        document.getElementById('login-email').value = email;
+        this.switchTab('login');
+        return;
+      }
+      // 정상 가입 → 인증 메일 안내 화면 (패널은 닫지 않는다)
+      this._pendingEmail = email;
+      document.getElementById('login-email').value = email;          // [로그인하기] 대비 prefill
+      const sentEmail = document.getElementById('sent-email');
+      if (sentEmail) sentEmail.textContent = email;
+      this.switchTab('sent');
     } catch { Toast.show('연결 오류가 발생했습니다'); }
     finally { if (btn) { btn.disabled = false; btn.textContent = '회원가입'; } }
+  },
+
+  // ── 인증 메일 재발송 (로그인/가입완료 화면 공용, 60초 제한) ───────────────────
+  resendFromSent()  { this._resend(this._pendingEmail || document.getElementById('login-email').value.trim(),
+                                   document.getElementById('resend-sent-btn')); },
+  resendFromLogin() { this._resend(this._pendingEmail || document.getElementById('login-email').value.trim(),
+                                   document.getElementById('resend-login-btn')); },
+
+  async _resend(email, btn) {
+    if (!email) { Toast.show('이메일 주소가 필요합니다'); return; }
+    const res = await API.resendSignupEmail(email);
+    if (res.error) Toast.show(authErrorMessage(res));
+    else           Toast.show('인증 메일을 다시 보냈습니다. 메일함을 확인해 주세요 📧');
+    this._startResendCooldown(btn, 60);   // 성공/실패 무관 60초 잠금(서버 쿨다운과 정렬)
+  },
+
+  _startResendCooldown(btn, secs) {
+    if (!btn) return;
+    clearInterval(this._resendTimer);
+    if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+    let left = secs;
+    btn.disabled = true;
+    btn.textContent = `다시 보내기 (${left}초)`;
+    this._resendTimer = setInterval(() => {
+      left--;
+      if (left <= 0) {
+        clearInterval(this._resendTimer);
+        btn.disabled = false;
+        btn.textContent = btn.dataset.label;
+      } else {
+        btn.textContent = `다시 보내기 (${left}초)`;
+      }
+    }, 1000);
   },
 
   async logout() {
@@ -2113,7 +2192,8 @@ const Auth = {
       await API.logout();               // 세션 즉시 종료
       Panels.closeAll();
       Toast.show('계정이 삭제되었습니다. 그동안 이용해 주셔서 감사합니다.');
-      Panels._open('auth-panel');       // 로그인 화면으로 이동
+      this.switchTab('login');          // 로그인 화면으로 이동
+      Panels._open('auth-panel');
     } catch (e) {
       Toast.show(e.message || '계정 삭제에 실패했습니다. 잠시 후 다시 시도해 주세요.');
     } finally {

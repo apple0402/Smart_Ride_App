@@ -233,15 +233,34 @@ const API = {
         emailRedirectTo: 'com.gansam.smartrider://auth-callback'
       }
     });
-    if (error) return { error: error.message };
-    return { id: data.user?.id, email: data.user?.email, name, token: data.session?.access_token };
+    if (error) return { error: error.message, code: error.code };
+    // Confirm email ON 상태에서 '이미 가입된 이메일'은 (이메일 열거 방지로) 에러 없이
+    // identities 가 빈 배열인 가짜 user 를 돌려준다 → 호출측에서 중복 가입으로 판정한다.
+    return {
+      id:         data.user?.id,
+      email:      data.user?.email,
+      name,
+      identities: data.user?.identities ?? [],
+      token:      data.session?.access_token
+    };
   },
 
   async login(email, password) {
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
-    if (error) return { error: error.message };
+    if (error) return { error: error.message, code: error.code };
     const name = data.user.user_metadata?.name || email.split('@')[0];
     return { id: data.user.id, email: data.user.email, name, token: data.session.access_token };
+  },
+
+  // 가입 인증 메일 재발송. 서버가 60초 쿨다운·시간당 레이트리밋을 강제한다(초과 시 code=over_email_send_rate_limit).
+  async resendSignupEmail(email) {
+    const { error } = await sb.auth.resend({
+      type:    'signup',
+      email,
+      options: { emailRedirectTo: 'com.gansam.smartrider://auth-callback' }
+    });
+    if (error) return { error: error.message, code: error.code };
+    return {};
   },
 
   async logout() { await sb.auth.signOut(); },
