@@ -53,6 +53,18 @@
 
     .slide-panel { position:fixed; left:0; right:0; bottom:0; z-index:200; background:#0f172a; border-top:1px solid #334155; border-radius:24px 24px 0 0; padding:20px 20px 32px; transform:translateY(100%); transition:transform 0.3s ease; box-shadow:0 -8px 32px rgba(0,0,0,0.5); }
     .slide-panel.open { transform:translateY(0); }
+    /* 공통 바텀시트: 고정 헤더 + 내부 스크롤 바디(바운스 체이닝 차단). 긴 패널에 적용. */
+    .slide-panel.sheet { padding:0; overflow:hidden; display:flex; flex-direction:column; }
+    .sheet-header { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:12px;
+      padding:14px 14px 14px 20px; border-bottom:1px solid #334155; background:#0f172a; border-radius:24px 24px 0 0; }
+    .sheet-title { display:flex; align-items:center; gap:8px; font-weight:700; font-size:17px; min-width:0; }
+    .sheet-close { flex:0 0 auto; position:relative; width:34px; height:34px; border-radius:10px; background:#1e293b;
+      color:#cbd5e1; display:flex; align-items:center; justify-content:center; font-size:22px; line-height:1; border:none; cursor:pointer; }
+    .sheet-close:hover { background:#334155; }
+    /* 터치 영역 44×44 (Apple HIG) — 보이는 크기는 34px 유지, 투명 영역으로만 확장 */
+    .sheet-close::after { content:''; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:44px; height:44px; }
+    .sheet-body { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+      -webkit-overflow-scrolling:touch; padding:18px 20px 28px; }
     .panel-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:150; display:none; }
     .panel-overlay.open { display:block; }
 
@@ -234,28 +246,27 @@
 <div id="panel-overlay" class="panel-overlay" onclick="Panels.closeAll()"></div>
 
 <!-- ── 위험 구역 목록 패널 (총 개수 + 심각도 필터) ─────────────────────────── -->
-<div id="zone-list-panel" class="slide-panel" style="max-height:75vh;overflow-y:auto;">
-  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
-
-  <!-- 대시보드 헤더 -->
-  <div class="flex items-center justify-between mb-3">
-    <h2 class="font-bold text-lg flex items-center gap-2">
+<div id="zone-list-panel" class="slide-panel sheet" style="max-height:75vh;">
+  <div class="sheet-header">
+    <div class="sheet-title">
       <span class="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center text-xs font-bold">!</span>
       위험 구역
-    </h2>
-    <span id="zone-total-count" class="text-xs bg-red-500/20 text-red-400 border border-red-500/30 rounded-full px-3 py-1 font-bold">총 0개</span>
+      <span id="zone-total-count" class="text-xs bg-red-500/20 text-red-400 border border-red-500/30 rounded-full px-3 py-1 font-bold">총 0개</span>
+    </div>
+    <button class="sheet-close" aria-label="닫기" onclick="Panels.closeAll()">×</button>
   </div>
+  <div class="sheet-body">
+    <!-- 심각도 필터 -->
+    <div class="flex gap-2 mb-4 overflow-x-auto pb-1" id="zone-filters">
+      <button class="filter-btn active-all" data-filter="all" onclick="ZoneList.filter('all')">전체</button>
+      <button class="filter-btn inactive" data-filter="high" onclick="ZoneList.filter('high')">🔴 위험</button>
+      <button class="filter-btn inactive" data-filter="medium" onclick="ZoneList.filter('medium')">🟠 주의</button>
+      <button class="filter-btn inactive" data-filter="low" onclick="ZoneList.filter('low')">🟡 경계</button>
+    </div>
 
-  <!-- 심각도 필터 -->
-  <div class="flex gap-2 mb-4 overflow-x-auto pb-1" id="zone-filters">
-    <button class="filter-btn active-all" data-filter="all" onclick="ZoneList.filter('all')">전체</button>
-    <button class="filter-btn inactive" data-filter="high" onclick="ZoneList.filter('high')">🔴 위험</button>
-    <button class="filter-btn inactive" data-filter="medium" onclick="ZoneList.filter('medium')">🟠 주의</button>
-    <button class="filter-btn inactive" data-filter="low" onclick="ZoneList.filter('low')">🟡 경계</button>
+    <div id="zone-list-items" class="space-y-3 pb-2"></div>
+    <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 rounded-xl text-sm text-slate-300 hover:bg-slate-600 transition-colors">닫기</button>
   </div>
-
-  <div id="zone-list-items" class="space-y-3 pb-2"></div>
-  <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 rounded-xl text-sm text-slate-300 hover:bg-slate-600 transition-colors">닫기</button>
 </div>
 
 <!-- ── 위험 신고 패널 ──────────────────────────────────────────────────────── -->
@@ -353,18 +364,25 @@
 </div>
 
 <!-- ── 차단 목록 관리 패널 ──────────────────────────────────────────────────── -->
-<div id="blocked-list-panel" class="slide-panel" style="max-height:80vh;overflow-y:auto;">
-  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
-  <h2 class="font-bold text-lg mb-1">차단 목록</h2>
-  <p class="text-slate-400 text-sm mb-5">차단한 사용자를 관리합니다.</p>
-  <div id="blocked-list-items" class="space-y-2"></div>
-  <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">닫기</button>
+<div id="blocked-list-panel" class="slide-panel sheet" style="max-height:80vh;">
+  <div class="sheet-header">
+    <div class="sheet-title">차단 목록</div>
+    <button class="sheet-close" aria-label="닫기" onclick="Panels.closeAll()">×</button>
+  </div>
+  <div class="sheet-body">
+    <p class="text-slate-400 text-sm mb-5">차단한 사용자를 관리합니다.</p>
+    <div id="blocked-list-items" class="space-y-2"></div>
+    <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">닫기</button>
+  </div>
 </div>
 
 <!-- ── 설정 패널 ────────────────────────────────────────────────────────────── -->
-<div id="settings-panel" class="slide-panel" style="max-height:80vh;overflow-y:auto;">
-  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
-  <h2 class="font-bold text-lg mb-5">설정</h2>
+<div id="settings-panel" class="slide-panel sheet" style="max-height:80vh;">
+  <div class="sheet-header">
+    <div class="sheet-title">설정</div>
+    <button class="sheet-close" aria-label="닫기" onclick="Panels.closeAll()">×</button>
+  </div>
+  <div class="sheet-body">
   <div class="space-y-5">
     <div class="flex items-center justify-between">
       <div><div class="font-medium text-sm">위험 구역 알림</div><div class="text-xs text-slate-400">위험 구역 접근 시 알림</div></div>
@@ -413,16 +431,21 @@
   </div>
   <button onclick="Settings.save()" class="mt-8 w-full py-4 bg-green-500 rounded-2xl text-sm font-bold text-white hover:bg-green-400 transition-colors">설정 저장</button>
   <button onclick="Panels.closeAll()" class="mt-2 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">취소</button>
+  </div>
 </div>
 
 <!-- ── 라이딩 기록 패널 ────────────────────────────────────────────────────── -->
-<div id="history-panel" class="slide-panel" style="max-height:80vh;overflow-y:auto;">
-  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
-  <h2 class="font-bold text-lg mb-4">라이딩 기록</h2>
-  <div id="history-list" class="space-y-3 pb-2">
-    <div class="text-center text-slate-500 py-8 text-sm">아직 기록이 없습니다. 첫 라이딩을 시작해 보세요!</div>
+<div id="history-panel" class="slide-panel sheet" style="max-height:80vh;">
+  <div class="sheet-header">
+    <div class="sheet-title">라이딩 기록</div>
+    <button class="sheet-close" aria-label="닫기" onclick="Panels.closeAll()">×</button>
   </div>
-  <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">닫기</button>
+  <div class="sheet-body">
+    <div id="history-list" class="space-y-3 pb-2">
+      <div class="text-center text-slate-500 py-8 text-sm">아직 기록이 없습니다. 첫 라이딩을 시작해 보세요!</div>
+    </div>
+    <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">닫기</button>
+  </div>
 </div>
 
 <!-- ── 로그인 / 회원가입 패널 ─────────────────────────────────────────────── -->
@@ -515,8 +538,12 @@
 </div>
 
 <!-- ── 프로필 패널 (레벨 시스템) ──────────────────────────────────────────── -->
-<div id="profile-panel" class="slide-panel" style="max-height:85vh;overflow-y:auto;">
-  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-6"></div>
+<div id="profile-panel" class="slide-panel sheet" style="max-height:85vh;">
+  <div class="sheet-header">
+    <div class="sheet-title">내 프로필</div>
+    <button class="sheet-close" aria-label="닫기" onclick="Panels.closeAll()">×</button>
+  </div>
+  <div class="sheet-body">
 
   <!-- 아바타 + 기본 정보 -->
   <div class="flex flex-col items-center mb-6">
@@ -596,17 +623,22 @@
       계정과 라이딩 기록이 영구 삭제됩니다.<br>등록한 위험 마커는 익명으로 유지됩니다.
     </p>
   </div>
+  </div>
 </div>
 
 <!-- ── 리포터 랭킹 패널 ────────────────────────────────────────────────────── -->
-<div id="ranking-panel" class="slide-panel" style="max-height:85vh;overflow-y:auto;">
-  <div class="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-4"></div>
-  <h2 class="font-bold text-lg mb-1">🏆 리포터 랭킹</h2>
-  <p class="text-xs text-slate-400 mb-4">기여 포인트(신고·투표) 상위 라이더</p>
-  <div id="ranking-list" class="space-y-2 pb-2">
-    <div class="text-slate-500 text-sm text-center py-8">불러오는 중…</div>
+<div id="ranking-panel" class="slide-panel sheet" style="max-height:85vh;">
+  <div class="sheet-header">
+    <div class="sheet-title">🏆 리포터 랭킹</div>
+    <button class="sheet-close" aria-label="닫기" onclick="Panels.closeAll()">×</button>
   </div>
-  <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">닫기</button>
+  <div class="sheet-body">
+    <p class="text-xs text-slate-400 mb-4">기여 포인트(신고·투표) 상위 라이더</p>
+    <div id="ranking-list" class="space-y-2 pb-2">
+      <div class="text-slate-500 text-sm text-center py-8">불러오는 중…</div>
+    </div>
+    <button onclick="Panels.closeAll()" class="mt-4 w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-colors">닫기</button>
+  </div>
 </div>
 
 <!-- ── 집단지성 투표 팝업 (반경 이탈 시 슬라이드업) ─────────────────────────── -->
