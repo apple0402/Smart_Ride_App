@@ -78,6 +78,13 @@
     .lrow .meta { flex:1; min-width:0; }
     .lrow .t { font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .lrow .sub { font-size:11px; color:var(--muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    /* 선택된 마커 강조용 펄스 링 (가볍게) */
+    @keyframes selPulse {
+      0%   { box-shadow:0 0 0 0   rgba(56,189,248,0.65); }
+      70%  { box-shadow:0 0 0 12px rgba(56,189,248,0); }
+      100% { box-shadow:0 0 0 0   rgba(56,189,248,0); }
+    }
+    .sel-marker { animation: selPulse 1.4s ease-out infinite; }
 
     /* 신고 카드 */
     .stat { font-size:12px; color:var(--muted); margin-bottom:12px; }
@@ -198,7 +205,7 @@ function markerIcon(zone, active) {
   const opacity = active ? 1 : confOf(zone).opacity;
   return L.divIcon({
     className: '',
-    html: `<div style="background:${color};border-radius:50%;width:${size}px;height:${size}px;
+    html: `<div class="${active ? 'sel-marker' : ''}" style="background:${color};border-radius:50%;width:${size}px;height:${size}px;
       display:flex;align-items:center;justify-content:center;font-size:${active ? 18 : 15}px;
       border:2px solid ${ring};box-shadow:0 2px 10px rgba(0,0,0,0.6);opacity:${opacity}">${emoji}</div>`,
     iconSize: [size, size], iconAnchor: [size / 2, size / 2]
@@ -286,11 +293,25 @@ function showEmpty(msg) {
 function select(id) {
   const prev = selected;
   selected = id;
+  // 이전/현재 마커 아이콘 갱신 + 선택 마커를 맨 앞으로(z-index)
   [prev, id].forEach(k => {
     const z = zones.find(x => x.id === k);
     const m = markers.get(k);
-    if (z && m) m.setIcon(markerIcon(z, z.id === selected));
+    if (z && m) {
+      m.setIcon(markerIcon(z, z.id === selected));
+      m.setZIndexOffset(z.id === selected ? 1000 : 0);
+    }
   });
+  // 선택 마커가 숨겨진 위험도 레이어에 있으면 자동으로 켜서 지도에 보이게 하고, 그 위치로 부드럽게 이동
+  const sel = zones.find(x => x.id === id);
+  if (sel) {
+    const k = sevOf(sel);
+    if (!sevOn[k]) toggleSev(k);
+    const lat = Number(sel.lat), lng = Number(sel.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      map.flyTo([lat, lng], Math.max(map.getZoom(), 16), { duration: 0.6 });
+    }
+  }
   setTab('map');   // 마커 선택 시 항상 지도 상세 탭으로 전환
 }
 
@@ -431,6 +452,31 @@ function renderDetail() {
   const coords  = (Number.isFinite(Number(z.lat)) && Number.isFinite(Number(z.lng)))
     ? `${Number(z.lat).toFixed(6)}, ${Number(z.lng).toFixed(6)}` : '';
 
+  // ── 순차 검토 이전/다음 ─────────────────────────────────────────────────────
+  const navItems = listItems();
+  const realIdx  = navItems.findIndex(x => x.id === z.id);
+  if (realIdx !== -1) navIndex = realIdx;   // 목록에 있으면 위치 동기화(빠지면 직전 값 유지)
+
+  let navEl;
+  if (!navItems.length) {
+    navEl = el('div', { style:'margin-top:12px;font-size:12px;color:var(--muted)',
+      textContent:'✓ 검토할 마커가 없습니다 (현재 목록 조건 기준)' });
+  } else {
+    const prevBtn = el('button', { className:'btn-ghost', textContent:'◀ 이전', style:'flex:1;margin:0' });
+    const nextBtn = el('button', { className:'btn-ghost', textContent:'다음 ▶', style:'flex:1;margin:0' });
+    // 끝단 비활성은 '목록에 있을 때'만. 빠진 상태에선 둘 다 활성해 재확인→다음 흐름이 이어지게 한다.
+    prevBtn.disabled = (realIdx === 0);
+    nextBtn.disabled = (realIdx !== -1 && realIdx >= navItems.length - 1);
+    prevBtn.onclick  = () => navTo(-1);
+    nextBtn.onclick  = () => navTo(1);
+    const posText = (realIdx !== -1)
+      ? `${realIdx + 1} / ${navItems.length}`
+      : `✓ 확인됨 · 남은 ${navItems.length}건`;
+    const pos = el('div', { textContent: posText,
+      style:'flex:0 0 auto;align-self:center;min-width:92px;text-align:center;font-size:12px;color:var(--muted)' });
+    navEl = el('div', { style:'display:flex;gap:8px;margin-top:12px' }, [prevBtn, pos, nextBtn]);
+  }
+
   panel.replaceChildren(...[
     field('고유 ID', z.id),
     field('한글 주소', z.address, '(주소 정보 없음 — 과거에 등록된 마커입니다)'),
@@ -445,6 +491,7 @@ function renderDetail() {
     el('div', { className:'row' }, [el('label', { textContent:'제목 (title)' }), titleInput]),
     el('div', { className:'row' }, [el('label', { textContent:'설명 (description)' }), descInput]),
     el('div', { className:'row' }, [el('label', { textContent:'위험도 (severity)' }), sevSelect]),
+    navEl,
     saveBtn,
     confirmBtn,
     unconfirmBtn,
@@ -485,6 +532,8 @@ function renderBody() {
 }
 
 function setTab(name) {
+  // 목록을 떠날 때 스크롤 위치를 기억해 두었다가 돌아오면 복원한다.
+  if (activeTab === 'list' && name !== 'list') listScrollTop = panel.scrollTop;
   activeTab = name;
   document.querySelectorAll('#tabs button').forEach(b =>
     b.setAttribute('aria-selected', String(b.dataset.tab === name)));
@@ -499,6 +548,16 @@ document.querySelectorAll('#tabs button').forEach(b => {
 let listSelection  = new Set();
 let listStaleOnly  = false;   // 만료 대상(90일 경과)만 보기
 let listSortOldest = false;   // 활동 오래된 순 정렬(만료 임박 우선)
+let listScrollTop  = 0;       // 목록↔상세 전환 시 스크롤 위치 보존
+let navIndex       = 0;       // 순차 검토(이전/다음)용 현재 위치. 목록에서 빠지면 '직전 위치'로 유지
+
+// 현재 필터/정렬을 적용한 표시 목록. 목록과 이전/다음 내비게이션이 동일한 순서를 쓰도록 공유한다.
+function listItems() {
+  let items = zones.slice();
+  if (listStaleOnly)  items = items.filter(isStale);
+  if (listSortOldest) items.sort((a, b) => (staleRefMs(a) ?? Infinity) - (staleRefMs(b) ?? Infinity));
+  return items;
+}
 
 function renderList() {
   // 이미 삭제된 마커는 선택 집합에서 정리
@@ -507,9 +566,7 @@ function renderList() {
 
   // 필터/정렬을 적용한 표시 목록(items). 선택·전체선택은 '보이는 것' 기준으로 동작한다.
   const staleCount = zones.filter(isStale).length;
-  let items = zones.slice();
-  if (listStaleOnly)  items = items.filter(isStale);
-  if (listSortOldest) items.sort((a, b) => (staleRefMs(a) ?? Infinity) - (staleRefMs(b) ?? Infinity));
+  const items = listItems();
 
   const selectAll = el('input', { type:'checkbox' });
   const delBtn    = el('button', { className:'btn-del', textContent:'🗑️ 선택 삭제' });
@@ -534,7 +591,7 @@ function renderList() {
   sortToggle.checked  = listSortOldest;
   sortToggle.onchange = () => { listSortOldest = sortToggle.checked; renderList(); };
 
-  const rows = items.map(z => {
+  const rows = items.map((z, i) => {
     const cb = el('input', { type:'checkbox' });
     cb.checked  = listSelection.has(z.id);
     cb.onclick  = e => e.stopPropagation();   // 행 클릭(상세 이동)과 분리
@@ -559,7 +616,7 @@ function renderList() {
         el('div', { className:'sub', textContent:`${SEV_LABELS[s(z.severity)] || '주의'} · ${confOf(z).label} · ${addr}` })
       ])
     ]);
-    row.onclick = () => select(z.id);   // 행 클릭 → 지도 상세로 이동
+    row.onclick = () => { navIndex = i; select(z.id); };   // 행 클릭 → 순번 기억 + 지도 상세로 이동
     return row;
   });
 
@@ -594,6 +651,26 @@ function renderList() {
   const emptyNote = items.length ? null
     : el('p', { style:'color:#94a3b8;font-size:13px;margin:12px 2px 0', textContent:'조건에 맞는 마커가 없습니다.' });
   panel.replaceChildren(...[tools, emptyNote, ...rows].filter(Boolean));
+  panel.scrollTop = listScrollTop;   // 상세를 보다 돌아왔을 때 스크롤 위치 복원
+}
+
+// ── 순차 검토 내비게이션 (이전/다음) ──────────────────────────────────────────
+// 현재 필터·정렬 목록(listItems) 순서대로 이동한다. "만료 대상만 보기"에서 운영자 확인하면
+// 그 마커가 목록에서 빠지는데, 그때는 기억해 둔 navIndex(= 빠지기 직전 순번)를 기준으로 삼아
+// '다음'은 그 자리(원래 다음 순번), '이전'은 그 앞으로 이동해 검토 흐름이 끊기지 않게 한다.
+function navTo(delta) {
+  const items = listItems();
+  if (!items.length) return;
+  const realIdx = items.findIndex(x => x.id === selected);
+  let target;
+  if (realIdx !== -1) {
+    target = realIdx + delta;                       // 목록에 있으면 단순히 이웃으로
+  } else {
+    target = (delta > 0) ? navIndex : navIndex - 1; // 빠졌으면 직전 순번 기준
+  }
+  target = Math.max(0, Math.min(items.length - 1, target));
+  navIndex = target;
+  select(items[target].id);
 }
 
 // ── 신고 관리 (content_reports) ────────────────────────────────────────────────
