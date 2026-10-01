@@ -1,5 +1,5 @@
 -- 운영(samrt-rider-DB, jidpwflthppsltdayhoy) submit_hazard_report 실제 정의
--- 2026-09-26 pg_get_functiondef 로 추출. 대조용 참고 자료 — 실행하지 말 것
+-- 2026-10-01 운영 추출 (samrt-rider-DB). 참고용 — 실행 금지
 
 CREATE OR REPLACE FUNCTION public.submit_hazard_report(p_type text, p_lat double precision, p_lng double precision, p_desc text DEFAULT ''::text, p_severity text DEFAULT 'medium'::text, p_address text DEFAULT ''::text, p_gps_accuracy double precision DEFAULT NULL::double precision)
  RETURNS jsonb
@@ -8,6 +8,7 @@ CREATE OR REPLACE FUNCTION public.submit_hazard_report(p_type text, p_lat double
  SET search_path TO 'public'
 AS $function$
 DECLARE
+  v_merge_radius constant double precision := 30;  -- 같은 유형 병합 반경(m)
   v_uid       uuid := auth.uid();
   v_title     text;
   v_desc      text;
@@ -50,6 +51,9 @@ BEGIN
     RAISE EXCEPTION '일일 신고 한도(10건)를 초과했습니다';
   END IF;
 
+  -- (3-b) 유형별 병합 경합 직렬화: 같은 유형끼리 순차 처리해 동시 신고 시 중복 zone 방지.
+  PERFORM pg_advisory_xact_lock(hashtext('zone_merge:' || p_type));
+
   v_title := CASE p_type
     WHEN 'pothole'      THEN '포트홀 / 크랙'
     WHEN 'slippery'     THEN '맨홀 / 미끄러움'
@@ -67,20 +71,19 @@ BEGIN
     INTO v_trust, v_confirmed, v_total
     FROM profiles WHERE id = v_uid;
 
-  -- (5) 카테고리별 승격 기준 (기타위험은 더 엄격하게: 3명)
-  v_required := CASE WHEN p_type = 'other' THEN 3 ELSE 2 END;
-
-  -- 신고 원본 기록
-  INSERT INTO reports (id, user_id, lat, lng, type, title, description, severity)
-  VALUES ('rpt-' || substr(md5(random()::text), 1, 8), v_uid, p_lat, p_lng,
-          p_type, v_title, v_desc, coalesce(p_severity, 'medium'));
-
-  -- 100m 내 활성 zone 검색
+  -- v_merge_radius 내 '같은 유형' 활성 zone 검색 (병합 직렬화를 위해 FOR UPDATE)
   SELECT * INTO v_nearby FROM zones
    WHERE status = 'active'
-     AND _haversine_m(lat, lng, p_lat, p_lng) < 100
+     AND type = p_type
+     AND _haversine_m(lat, lng, p_lat, p_lng) < v_merge_radius
    ORDER BY _haversine_m(lat, lng, p_lat, p_lng) ASC
-   LIMIT 1;
+   LIMIT 1
+   FOR UPDATE;
+
+  -- 검색 직후: 같은 유저가 이미 이 구역 신고자면 거부(5분/15m 창 밖 재신고도 차단)
+  IF FOUND AND v_uid::text = ANY (v_nearby.reporter_ids) THEN
+    RAISE EXCEPTION '이미 신고하신 위험 구역입니다';
+  END IF;
 
   IF FOUND THEN
     v_was_conf := (v_nearby.confirmation = 'confirmed');
@@ -95,6 +98,9 @@ BEGIN
      RETURNING * INTO v_zone;
 
     v_distinct := coalesce(array_length(v_zone.reporter_ids, 1), 0);
+
+    -- (5) 카테고리별 승격 기준 — 병합된 zone 의 유형(v_zone.type) 기준으로 계산.
+    v_required := CASE WHEN v_zone.type = 'other' THEN 3 ELSE 2 END;
 
     -- 승격: 서로 다른 신고자 수 도달 OR 실적 있는 고신뢰 유저의 즉시 승격
     IF v_zone.confirmation <> 'confirmed'
@@ -120,6 +126,13 @@ BEGIN
     v_action := 'created';
   END IF;
 
+  -- 신고 원본 기록 (zone 결정 이후로 이동 — zone_id / gps_accuracy 기록)
+  INSERT INTO reports (id, user_id, lat, lng, type, title, description, severity,
+                       zone_id, gps_accuracy)
+  VALUES ('rpt-' || substr(md5(random()::text), 1, 8), v_uid, p_lat, p_lng,
+          p_type, v_title, v_desc, coalesce(p_severity, 'medium'),
+          v_zone.id, p_gps_accuracy);
+
   -- 신고 포인트 단계 지급 (섹션 5): 제출 즉시 기여 +3, 신고 수 +1
   UPDATE profiles
      SET contribution_points = contribution_points + 3,
@@ -140,4 +153,4 @@ BEGIN
   END IF;
 
   RETURN jsonb_build_object('action', v_action, 'zone', to_jsonb(v_zone));
-END $function$;
+END $function$
