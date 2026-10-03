@@ -816,7 +816,11 @@ async function watchRepair(wasRunning) {
 }
 
 repairBtn.onclick = async () => {
-  if (!confirm('주소가 비어 있는 마커를 좌표로 역지오코딩해 한글 주소를 채웁니다.\n1건당 약 1초가 걸리며, 이 창을 닫아도 서버에서 계속 진행됩니다.')) return;
+  // 대상 개수는 '필터와 무관하게' 전체 활성·빈주소 마커 기준으로 센다(만료 정리 버튼과 동일 패턴).
+  const emptyCount = zones.filter(z => (!s(z.status) || s(z.status) === 'active') && !s(z.address).trim()).length;
+  if (!emptyCount) { toast('주소가 비어 있는 마커가 없습니다.'); return; }
+  if (!confirm(`빈 주소 ${emptyCount}건을 좌표로 역지오코딩해 한글 주소로 복원합니다.\n`
+             + '1건당 약 1초가 걸리며, 이 창을 닫아도 서버에서 계속 진행됩니다.\n\n계속할까요?')) return;
   repairBtn.disabled = true;
   try {
     const st = await api('/admin/api/repair', 'POST');

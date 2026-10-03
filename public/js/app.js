@@ -545,7 +545,7 @@ function renderZones(zones) {
     popupDiv.innerHTML = `
       <div style="font-weight:800;font-size:15px;margin-bottom:6px">${ZONE_ICONS[z.type]||'⚠️'} ${escHtml(zoneLabel(z))}</div>
       <div style="font-size:11px;margin-bottom:4px;color:#cbd5e1">${conf.label}</div>
-      <div style="color:#94a3b8;margin-bottom:3px;font-size:11px">📍 <span id="popup-addr-${z.id}">주소 조회 중…</span></div>
+      <div style="color:#94a3b8;margin-bottom:3px;font-size:11px">📍 <span id="popup-addr-${z.id}">${(z.address && String(z.address).trim()) ? escHtml(z.address) : '주소 조회 중…'}</span></div>
       <div style="color:#64748b;font-size:11px;margin-bottom:3px">📅 ${formatDate(z.createdAt)}</div>
       <div style="color:#86efac;font-size:11px;margin-bottom:6px">✅ 이젠 안전해요 (${z.safeVotes||0} / 3명 완료)</div>
       <div style="color:#f97316;font-size:11px">신고 수: ${z.reportCount || 1}</div>
@@ -560,6 +560,9 @@ function renderZones(zones) {
     }
     marker.bindPopup(popupDiv, { maxWidth: 260 });
     marker.on('popupopen', () => {
+      // DB 주소가 있으면 초기 렌더에서 이미 표시됐으므로 Nominatim 을 치지 않는다.
+      // 과거(빈 주소) 마커만 라이브 역지오코딩으로 보충한다.
+      if (z.address && String(z.address).trim()) return;
       getAddress(z.lat, z.lng).then(addr => {
         const el = document.getElementById(`popup-addr-${z.id}`);
         if (el) el.textContent = addr;
