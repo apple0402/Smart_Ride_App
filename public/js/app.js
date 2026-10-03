@@ -2058,12 +2058,13 @@ const Auth = {
   openPanel() {
     if (this.user) { Panels.openProfile(); return; }
     this.switchTab('login');        // 항상 로그인 화면으로 열기
+    Panels._open('auth-panel');
     // 이메일이 비어 있으면 지난 로그인 때 저장해 둔 값으로 미리 채운다(비밀번호는 저장/복원하지 않음).
+    // _open 내부의 closeAll→clearForms 가 끝난 뒤 채워야 값이 지워지지 않는다.
     const emailEl = document.getElementById('login-email');
     if (emailEl && !emailEl.value) {
       try { emailEl.value = localStorage.getItem('saferide_last_email') || ''; } catch (e) {}
     }
-    Panels._open('auth-panel');
   },
 
   // 뷰 전환: 'login' | 'signup' | 'sent'
