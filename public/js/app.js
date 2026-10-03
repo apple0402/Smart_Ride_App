@@ -476,7 +476,7 @@ async function sendSwAlert(zone) {
 // ═══════════════════════════════════════════════════════════════════════════
 // 구역 로드 & 렌더링
 // ═══════════════════════════════════════════════════════════════════════════
-async function loadZones() {
+async function loadZones(opts) {
   try {
     const fresh = await API.getZones();
     const existingIds = new Set(allZones.map(z => z.id));
@@ -485,7 +485,8 @@ async function loadZones() {
     renderZones(allZones);
     updateNearbyCount();
     ZoneList.render();
-    if (newZones.length) Toast.show(`새 위험 구역 ${newZones.length}개가 지도에 추가됐습니다`);
+    // 내 신고/차단 직후 재조회(silent)에서는 "새 위험 구역" 토스트를 띄우지 않는다.
+    if (newZones.length && !(opts && opts.silent)) Toast.show(`새 위험 구역 ${newZones.length}개가 지도에 추가됐습니다`);
     // SW 백그라운드 감지용: 구역 데이터를 Service Worker에 전달
     sendSwMessage({
       type:  'ZONES_DATA',
@@ -534,8 +535,8 @@ function renderZones(zones) {
     const marker = L.marker([z.lat, z.lng], { icon }).addTo(zoneLayer);
     const popupDiv = document.createElement('div');
     popupDiv.style.cssText = 'max-width:260px;font-size:13px;line-height:1.6;overflow-wrap:anywhere';
-    // 신고·차단 버튼: 본인이 최초 등록한(reporter_ids[0]) 구역에는 숨긴다. 비로그인 탭 시 로그인 유도.
-    const isOwner = !!(Auth.user && z.reporterIds && z.reporterIds[0] === Auth.user.id);
+    // 신고·차단 버튼: 본인이 등록한 구역에는 숨긴다(서버가 is_mine 판정). 비로그인 탭 시 로그인 유도.
+    const isOwner = !!z.isMine;
     const reportBtn = isOwner ? '' : `
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid #334155">
         <button type="button" class="js-zone-report"
@@ -668,9 +669,7 @@ function checkProximity(lat, lng) {
         // 이탈 확정 즉시 투표 팝업을 지연 없이 다이렉트로 발현 (미세 타이머 체인 없음)
         // 투표 팝업: 라이딩 중이면 alertsEnabled 설정과 무관하게 무조건 표시
         if (Ride.active) {
-          const alreadyVoted = Auth.user
-            ? (Array.isArray(z.safeVoterIds) && z.safeVoterIds.includes(Auth.user.id))
-            : false;
+          const alreadyVoted = !!z.iVoted;
           // [5차 수정] 이 구역은 이번 통과에서 소진(First Win) — 표시 여부와 무관하게 잠근다.
           // 이미 투표한 구역도 함께 잠가야 재진입 시 알림·배너가 반복되지 않는다.
           lockZoneVote(z.id);
@@ -1449,8 +1448,9 @@ const VotePopup = {
           updateNearbyCount();
           Toast.show('✅ 3명 완료 — 위험 구역이 자동 해제되었습니다!');
         } else {
+          // 응답 PII(safe_voter_ids)에 의존하지 않는다 — 득표수(비식별)만 반영하고 iVoted 를 로컬로 올린다.
           const z = allZones.find(z => z.id === zone.id);
-          if (z) { z.safeVotes = result.zone.safeVotes; z.safeVoterIds = result.zone.safeVoterIds; }
+          if (z) { z.safeVotes = result.zone.safeVotes; z.iVoted = true; }
           Toast.show(`안전 투표 완료 (${result.zone.safeVotes}/3)`);
         }
         // 안전 투표 포인트(+5)는 cast_safety_vote RPC가 서버에서 지급한다.
@@ -1557,22 +1557,9 @@ const Report = {
         gpsAccuracy: pos.accuracy
       });
 
-      if (result.action === 'created') {
-        allZones.push(result.zone);
-        renderZones(allZones);
-        ZoneList.render();
-        document.getElementById('danger-count-text').textContent = `주변 ${allZones.length}개 위험`;
-        // 비차단 역지오코딩 — 완료되면 메모리상 zone 에 주소를 채우고 목록·투표창 부제를 갱신한다.
-        // getAddress 는 실패해도 좌표 문자열을 반환(throw 없음)하고, 팝업이 쓰는 캐시도 함께 데운다.
-        getAddress(result.zone.lat, result.zone.lng).then(addr => {
-          result.zone.address = addr;   // allZones 가 같은 객체를 참조하므로 즉시 반영됨
-          ZoneList.render();
-        });
-      } else {
-        // 기존 zone 갱신 — reportCount/confirmation(승격 여부) 등 최신 상태로 통째 교체
-        const idx = allZones.findIndex(z => z.id === result.zone.id);
-        if (idx !== -1) { allZones[idx] = result.zone; renderZones(allZones); }
-      }
+      // 신고 후에는 응답 PII(reporter_ids/safe_voter_ids)에 의존하지 않고 get_visible_zones 로
+      // 재조회해 최신 상태(마커 + isMine/iVoted 등 boolean)를 반영한다. (주소는 팝업이 라이브 조회)
+      await loadZones({ silent: true });
 
       // 신고 포인트(+10)와 total_reports 증가는 submit_hazard_report RPC가 서버에서 처리한다.
       Panels.closeAll();
@@ -1652,8 +1639,8 @@ const ContentReport = {
     }
     const zone = allZones.find(z => z.id === zoneId);
     if (!zone) { Toast.show('구역 정보를 찾을 수 없습니다'); return; }
-    // 본인이 최초 등록한 구역은 신고·차단 대상이 아니다(팝업 버튼도 숨겨져 있음).
-    if (zone.reporterIds && zone.reporterIds[0] === Auth.user.id) {
+    // 본인이 등록한 구역은 신고·차단 대상이 아니다(팝업 버튼도 숨겨져 있음, 서버도 거부).
+    if (zone.isMine) {
       Toast.show('본인이 등록한 구역은 신고할 수 없습니다');
       return;
     }
@@ -1663,9 +1650,9 @@ const ContentReport = {
     const detail = document.getElementById('cr-detail');
     detail.value = '';
     detail.classList.add('hidden');
-    // 차단 버튼: 최초 등록자를 알 수 없으면(reporter_ids 비어있음) 비활성화
+    // 차단 버튼: 소유자가 없으면(서버 has_owner=false) 비활성화
     const blockBtn = document.getElementById('content-block-btn');
-    const hasOwner = !!(zone.reporterIds && zone.reporterIds[0]);
+    const hasOwner = !!zone.hasOwner;
     blockBtn.disabled = !hasOwner;
     blockBtn.style.opacity = hasOwner ? '1' : '0.4';
     Panels._open('content-report-panel');
@@ -1688,14 +1675,11 @@ const ContentReport = {
     const btn = document.getElementById('content-report-submit-btn');
     if (btn) { btn.disabled = true; btn.textContent = '제출 중...'; }
     try {
-      await API.reportContent({
-        hazardId:       zone.id,
-        reportedUserId: (zone.reporterIds && zone.reporterIds[0]) || null,
-        reason,
-        detail
-      });
+      const res = await API.reportContent({ hazardId: zone.id, reason, detail });
       Panels.closeAll();
-      Toast.show('신고가 접수되었습니다');
+      Toast.show(res.status === 'duplicate'
+        ? '이미 신고가 접수된 구역입니다'
+        : '신고가 접수되었습니다');
     } catch (e) {
       Toast.show(e.message || '신고 제출에 실패했습니다');
     } finally {
@@ -1706,18 +1690,14 @@ const ContentReport = {
   async block() {
     const zone = this._zone;
     if (!zone) return;
-    const blockedId = zone.reporterIds && zone.reporterIds[0];
-    if (!blockedId) { Toast.show('차단할 사용자를 찾을 수 없습니다'); return; }
+    if (!zone.hasOwner) { Toast.show('차단할 사용자를 찾을 수 없습니다'); return; }
     if (!confirm('이 사용자를 차단하면 이 사용자가 등록한 위험구역이 더 이상 보이지 않습니다. 차단할까요?')) return;
     try {
-      await API.blockUser(blockedId);
-      // 차단한 사용자가 최초 등록한 구역을 지도·목록에서 즉시 제거
-      allZones = allZones.filter(z => !(z.reporterIds && z.reporterIds[0] === blockedId));
-      renderZones(allZones);
-      ZoneList.render();
-      updateNearbyCount();
+      await API.blockZoneOwner(zone.id);
       Panels.closeAll();
       Toast.show('차단되었습니다');
+      // 차단한 소유자의 마커는 서버(get_visible_zones)가 제외 → 재조회로 지도·목록 반영
+      await loadZones({ silent: true });
     } catch (e) {
       Toast.show(e.message || '차단에 실패했습니다');
     }
@@ -2404,9 +2384,7 @@ if (Platform.isIOS && window.CapBridge?.BackgroundSafety) {
     if (voteLockedZones.has(zoneId)) return;
     const zone = allZones.find(z => z.id === zoneId);
     if (!zone) return;
-    const alreadyVoted = Auth.user
-      ? (Array.isArray(zone.safeVoterIds) && zone.safeVoterIds.includes(Auth.user.id))
-      : false;
+    const alreadyVoted = !!zone.iVoted;
     lockZoneVote(zoneId);
     if (!alreadyVoted) VotePopup.show(zone);
   });
