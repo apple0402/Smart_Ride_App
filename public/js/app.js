@@ -2058,6 +2058,11 @@ const Auth = {
   openPanel() {
     if (this.user) { Panels.openProfile(); return; }
     this.switchTab('login');        // 항상 로그인 화면으로 열기
+    // 이메일이 비어 있으면 지난 로그인 때 저장해 둔 값으로 미리 채운다(비밀번호는 저장/복원하지 않음).
+    const emailEl = document.getElementById('login-email');
+    if (emailEl && !emailEl.value) {
+      try { emailEl.value = localStorage.getItem('saferide_last_email') || ''; } catch (e) {}
+    }
     Panels._open('auth-panel');
   },
 
@@ -2101,6 +2106,8 @@ const Auth = {
         else wrap?.classList.add('hidden');
         return;
       }
+      // 다음 로그인 때 이메일만 미리 채우기 위해 저장한다(비밀번호는 절대 저장하지 않는다).
+      try { localStorage.setItem('saferide_last_email', email); } catch (e) {}
       Panels.closeAll();
       Toast.show(`환영합니다, ${res.name}! 🚴`);
     } catch { Toast.show('연결 오류가 발생했습니다'); }
@@ -2186,6 +2193,8 @@ const Auth = {
     try {
       await API.deleteAccount();
       await API.logout();               // 세션 즉시 종료
+      // 탈퇴 성공 시에만 저장해 둔 이메일을 지운다(로그아웃에서는 보존).
+      try { localStorage.removeItem('saferide_last_email'); } catch (e) {}
       Panels.closeAll();
       Toast.show('계정이 삭제되었습니다. 그동안 이용해 주셔서 감사합니다.');
       this.switchTab('login');          // 로그인 화면으로 이동
