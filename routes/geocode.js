@@ -7,7 +7,7 @@ const router = express.Router();
 async function reverseGeocode(lat, lng) {
   const r = await fetch(
     `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=ko&zoom=18&addressdetails=1`,
-    { headers: { 'User-Agent': 'SafeRideApp/1.0' } }
+    { headers: { 'User-Agent': 'SafeRide/1.0 (lbs0402@gmail.com)' } }
   );
   const j = await r.json();
   const addr = j.address || {};

@@ -280,18 +280,32 @@ router.patch('/api/reports/:id', async (req, res) => {
 // 빈 주소 행만 다시 골라 처리하므로 재실행하면 남은 건부터 이어진다.
 const { reverseGeocode } = require('./geocode');
 const REPAIR_DELAY_MS = 1100;
+const REPAIR_RETRY_MS = 3000;   // 일시적 실패(네트워크/429) 시 재시도 전 대기
 let repair = { running: false, total: 0, done: 0, filled: 0, failed: 0, startedAt: null, finishedAt: null };
+
+// 한 건 역지오코딩 후 저장. 주소가 비거나 저장 실패면 throw 해 재시도/실패 집계로 넘긴다.
+async function repairOne(db, z) {
+  const address = await reverseGeocode(z.lat, z.lng);
+  if (!address) throw new Error('empty');
+  const { error } = await db.from('zones').update({ address }).eq('id', z.id);
+  if (error) throw error;
+}
 
 async function runRepair(db, rows) {
   for (const z of rows) {
     try {
-      const address = await reverseGeocode(z.lat, z.lng);
-      if (!address) throw new Error('empty');
-      const { error } = await db.from('zones').update({ address }).eq('id', z.id);
-      if (error) throw error;
+      await repairOne(db, z);
       repair.filled++;
     } catch (_) {
-      repair.failed++;   // 한 건 실패로 전체를 멈추지 않는다 — 빈 주소로 남아 재실행 대상이 된다
+      // 1차 실패는 3초 대기 후 1회 재시도. 그래도 실패하면 failed 로 집계한다
+      // (빈 주소로 남아 재실행 대상이 된다 — 한 건 실패로 전체를 멈추지 않는다).
+      await new Promise(r => setTimeout(r, REPAIR_RETRY_MS));
+      try {
+        await repairOne(db, z);
+        repair.filled++;
+      } catch (_) {
+        repair.failed++;
+      }
     }
     repair.done++;
     await new Promise(r => setTimeout(r, REPAIR_DELAY_MS));
@@ -312,7 +326,7 @@ router.post('/api/repair', async (req, res) => {
   repair = { running: true, total: 0, done: 0, filled: 0, failed: 0, startedAt: new Date().toISOString(), finishedAt: null };
 
   const { data, error } = await db
-    .from('zones').select('id, lat, lng').or('address.is.null,address.eq.');
+    .from('zones').select('id, lat, lng').eq('status', 'active').or('address.is.null,address.eq.');
   if (error) {
     repair.running = false;
     return res.status(502).json({ error: error.message });

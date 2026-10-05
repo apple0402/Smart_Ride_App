@@ -22,6 +22,29 @@ function mapZone(z) {
   };
 }
 
+// get_visible_zones RPC 행 → 앱 모델. reporter_ids/safe_voter_ids 원본 대신 호출자 기준 boolean 을 받는다.
+function mapVisibleZone(z) {
+  return {
+    id:           z.id,
+    lat:          z.lat,
+    lng:          z.lng,
+    title:        z.title,
+    type:         z.type,
+    desc:         z.description || '',
+    address:      z.address || '',
+    severity:     z.severity,
+    reportCount:  z.report_count,
+    safeVotes:    z.safe_votes || 0,
+    status:       z.status || 'active',
+    confirmation: z.confirmation || 'unconfirmed',
+    createdAt:    z.created_at,
+    adminConfirmed: !!z.admin_confirmed,
+    isMine:       !!z.is_mine,
+    iVoted:       !!z.i_voted,
+    hasOwner:     !!z.has_owner
+  };
+}
+
 function mapRide(r) {
   return {
     id:                r.id,
@@ -45,19 +68,13 @@ function _hav(lat1, lng1, lat2, lng2) {
 const API = {
 
   // ══ 위험구역 (활성 상태만 조회) ════════════════════════════════════════════
-  // 로그인 사용자가 차단한 사용자가 '최초 등록'(reporter_ids[0])한 구역은 결과에서 제외한다.
-  // (지도 마커·목록·네이티브 알림이 모두 이 결과를 쓰므로 한 곳에서 필터링하면 전 경로에 반영됨)
+  // get_visible_zones RPC 가 활성 마커를 돌려준다. reporter_ids/safe_voter_ids 원본 대신
+  // 호출자 기준 boolean(isMine/iVoted/hasOwner/adminConfirmed)만 받고, 차단한 소유자의 마커는
+  // 서버에서 제외된다(비로그인도 호출 가능 — 지도는 로그인 없이 보임).
   async getZones() {
-    const { data, error } = await sb
-      .from('zones')
-      .select('*')
-      .eq('status', 'active')
-      .order('created_at', { ascending: false });
+    const { data, error } = await sb.rpc('get_visible_zones');
     if (error) throw error;
-    let zones = data.map(mapZone);
-    const blocked = await this.getBlockedIds();
-    if (blocked.size) zones = zones.filter(z => !blocked.has(z.reporterIds?.[0]));
-    return zones;
+    return (data || []).map(mapVisibleZone);
   },
 
   async getNearbyZones(lat, lng, radius = 500) {
@@ -169,28 +186,24 @@ const API = {
   },
 
   // ══ 콘텐츠 신고 · 사용자 차단 (App Review 대응) ═════════════════════════════
-  // 위험구역 마커(UGC) 신고. reporter_id 는 RLS 가 auth.uid() 로 강제하므로 여기서만 세팅.
-  // hazardId=zones.id(TEXT), reportedUserId=reporter_ids[0](최초 등록자, 없으면 null).
-  async reportContent({ hazardId, reportedUserId, reason, detail }) {
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) throw new Error('로그인이 필요합니다');
-    const { error } = await sb.from('content_reports').insert({
-      reporter_id:      user.id,
-      hazard_id:        hazardId || null,
-      reported_user_id: reportedUserId || null,
-      reason,
-      detail:           detail || null
+  // 위험구역 마커(UGC) 신고 — 서버 RPC(submit_content_report)가 소유자(reporter_ids[1])를
+  // 해석해 content_reports 에 기록한다(앱은 마커 ID만 전달, 상대 ID 비노출).
+  // 반환 status: 'created' | 'duplicate'(이미 신고한 구역).
+  async reportContent({ hazardId, reason, detail }) {
+    const { data, error } = await sb.rpc('submit_content_report', {
+      p_hazard_id: hazardId || null,
+      p_reason:    reason,
+      p_detail:    detail || null
     });
     if (error) throw new Error(error.message || '신고 처리 중 오류가 발생했습니다');
+    return { status: (data && data.status) || 'created' };
   },
 
-  // 로그인 사용자가 차단한 blocked_id 집합 (getZones 필터용). 비로그인/오류 시 빈 Set.
-  async getBlockedIds() {
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return new Set();
-    const { data, error } = await sb.from('blocked_users').select('blocked_id');
-    if (error) return new Set();
-    return new Set((data || []).map(r => r.blocked_id));
+  // 마커 소유자 차단 — 서버 RPC(block_zone_owner)가 소유자를 해석해 blocked_users 에 기록(멱등).
+  // 앱은 마커 ID만 전달(상대 ID 비노출).
+  async blockZoneOwner(zoneId) {
+    const { error } = await sb.rpc('block_zone_owner', { p_zone_id: zoneId });
+    if (error) throw new Error(error.message || '차단 처리 중 오류가 발생했습니다');
   },
 
   // 차단 목록 (설정 관리 화면용). 이름은 익명화 정책상 노출하지 않는다.
@@ -202,15 +215,6 @@ const API = {
       .order('created_at', { ascending: false });
     if (error) return [];
     return data || [];
-  },
-
-  async blockUser(blockedId) {
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) throw new Error('로그인이 필요합니다');
-    if (!blockedId) throw new Error('차단할 사용자를 찾을 수 없습니다');
-    // 이미 차단돼 있으면 UNIQUE 충돌 → 무시(멱등). 그 외 오류만 노출.
-    const { error } = await sb.from('blocked_users').insert({ blocker_id: user.id, blocked_id: blockedId });
-    if (error && error.code !== '23505') throw new Error(error.message || '차단 처리 중 오류가 발생했습니다');
   },
 
   async unblockUser(blockedId) {
@@ -233,15 +237,34 @@ const API = {
         emailRedirectTo: 'com.gansam.smartrider://auth-callback'
       }
     });
-    if (error) return { error: error.message };
-    return { id: data.user?.id, email: data.user?.email, name, token: data.session?.access_token };
+    if (error) return { error: error.message, code: error.code };
+    // Confirm email ON 상태에서 '이미 가입된 이메일'은 (이메일 열거 방지로) 에러 없이
+    // identities 가 빈 배열인 가짜 user 를 돌려준다 → 호출측에서 중복 가입으로 판정한다.
+    return {
+      id:         data.user?.id,
+      email:      data.user?.email,
+      name,
+      identities: data.user?.identities ?? [],
+      token:      data.session?.access_token
+    };
   },
 
   async login(email, password) {
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
-    if (error) return { error: error.message };
+    if (error) return { error: error.message, code: error.code };
     const name = data.user.user_metadata?.name || email.split('@')[0];
     return { id: data.user.id, email: data.user.email, name, token: data.session.access_token };
+  },
+
+  // 가입 인증 메일 재발송. 서버가 60초 쿨다운·시간당 레이트리밋을 강제한다(초과 시 code=over_email_send_rate_limit).
+  async resendSignupEmail(email) {
+    const { error } = await sb.auth.resend({
+      type:    'signup',
+      email,
+      options: { emailRedirectTo: 'com.gansam.smartrider://auth-callback' }
+    });
+    if (error) return { error: error.message, code: error.code };
+    return {};
   },
 
   async logout() { await sb.auth.signOut(); },

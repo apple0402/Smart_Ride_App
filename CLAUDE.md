@@ -48,3 +48,9 @@
 - 파일 상단 주석에 적용 일자·대상 프로젝트·검증 여부를 남긴다.
 - 이 저장소의 마이그레이션은 자동 실행되지 않는다(수동 적용). 스테이징 → smoke-test →
   운영 순서를 지킨다.
+- **CLI 적용 명령 절대 금지**: `supabase db push` / `supabase db reset` / `supabase migration up` 등
+  마이그레이션을 CLI로 적용하는 명령은 실행하지 않는다. 이 프로젝트는 SQL Editor에서 수동 적용하며,
+  적용 이력이 CLI에 기록돼 있지 않아 CLI 실행 시 전체 마이그레이션이 재적용될 위험이 있다
+  (특히 `20260918_restore_api_role_grants.sql`).
+- **`supabase/deferred/`**: 지정된 시점에 사람이 수동 적용하는 파일이다.
+  `migrations/` 폴더로 옮기거나, 적용하거나, 적용을 제안하지 않는다.
